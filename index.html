@@ -1518,18 +1518,15 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', async (gl
       loadingEl.classList.add('done');
       setTimeout(() => loadingEl.remove(), 900);
     };
-    // Start the train sound with the reveal. If the browser blocks sound until the visitor
-    // interacts, keep the screen up as a "click to enter": that click starts the sound (via the
-    // unlock listeners) and lifts the screen.
-    trainSound.play().then(lift, (err) => {
-      if (err.name !== 'NotAllowedError') return lift();
-      soundUnlocked = false;
-      for (const ev of UNLOCK_EVENTS) addEventListener(ev, unlockSound, { capture: true, passive: true });
-      loadingEl.classList.add('ask');
-      document.getElementById('loadingLabel').textContent = matchMedia('(pointer: coarse)').matches ? 'TAP TO ENTER' : 'CLICK TO ENTER';
-      loadingEl.addEventListener('click', lift, { once: true });
-      addEventListener('keydown', lift, { once: true });
-    });
+    // Always keep the screen up as a "click to enter" (tap on phones), even where the browser
+    // would let sound start by itself: that click starts the sound (via the unlock listeners,
+    // inside the click, where every browser allows it) and lifts the screen.
+    soundUnlocked = false;
+    for (const ev of UNLOCK_EVENTS) addEventListener(ev, unlockSound, { capture: true, passive: true });
+    loadingEl.classList.add('ask');
+    document.getElementById('loadingLabel').textContent = matchMedia('(pointer: coarse)').matches ? 'TAP TO ENTER' : 'CLICK TO ENTER';
+    loadingEl.addEventListener('click', lift, { once: true });
+    addEventListener('keydown', lift, { once: true });
   };
   // Compile every shader and upload every texture up front. Otherwise each part of the board's far
   // side compiles the first time the spin turns it into view, and the turntable stalls for a moment.
@@ -1544,6 +1541,20 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', async (gl
   compileAll()
     .then(() => { if (PHONE) { for (const l of nightLights.list) l.visible = false; return compileAll(); } })
     .catch(() => {}).finally(() => {
+      // Draw a frame in each lighting state now, hidden behind the loading screen. compile() only
+      // starts a shader; the graphics driver finishes it the first time something is drawn with
+      // it, so the first switch to night (other lights, fireflies, flames) used to stall on that.
+      // Materials are told to look their shader up again first (needsUpdate: it picks the one
+      // already built for that state, nothing is rebuilt): some, like the fireflies', otherwise
+      // keep drawing with the one they had and leave the night one untouched until night falls.
+      // (the animation loop has been running meanwhile and hides the fireflies again by day: re-show them)
+      const warm = () => {
+        for (const o of hidden) o.visible = true;
+        scene.traverse((o) => { for (const m of [o.material].flat()) if (m) m.needsUpdate = true; });
+        renderer.render(scene, orbitCam);
+      };
+      warm();
+      if (PHONE) { for (const l of nightLights.list) l.visible = true; warm(); }
       for (const o of hidden) o.visible = false;
       if (PHONE && sunLight) cacheStillShadows(root, gltf.animations);
       if (PHONE) { for (const l of nightLights.list) l.visible = true; nightLights.on = true; setNightLights(night > 0.001); }
@@ -1834,8 +1845,24 @@ function makeSound(src) {
 function unlockAllSounds(prime = true) {
   if (VOLUME_LOCKED && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx) { for (const a of allSounds) routeThroughGain(a); audioCtx.resume(); }
-  if (prime) for (const a of allSounds) if (a.paused && !a.dataset.primed) primeSound(a);
+  if (prime) for (const a of allSounds) if (a.paused && !a.dataset.primed && !a.dataset.tapOnly) primeSound(a);
 }
+
+// Phones can suspend a page's audio behind its back (a notification, another app, a long pause),
+// and a sound whose silent first start (primeSound) was refused stays blocked from then on, until
+// something re-primes it (entering the cab used to). Every tap now puts both right, and a sound that
+// gets refused later is marked for re-priming on the next tap.
+function playSound(a) {
+  return a.play().catch((err) => { if (err.name === 'NotAllowedError') delete a.dataset.primed; });
+}
+function repairSound() {
+  if (!soundUnlocked) return;   // the first tap is handled by unlockSound
+  if (audioCtx && audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+  // (tap-only sounds, the cats', start inside the tap itself: priming them would mute that start)
+  for (const a of allSounds) if (a.paused && !a.dataset.primed && !a.dataset.tapOnly) primeSound(a);
+}
+for (const ev of ['pointerup', 'touchend', 'click', 'keydown']) addEventListener(ev, repairSound, { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && audioCtx) audioCtx.resume().catch(() => {}); });
 
 // Click a giant cat to hear it. Each cat's rig root (named in Blender) gets its own sound; a click
 // is a press and release without dragging, so orbiting the view never sets one off.
@@ -1850,6 +1877,7 @@ function addCatSounds(root) {
     if (sound === 'black') findGaze(cat, blackEye);   // and this one's gaze sets off its sound
     const audio = makeSound(`sounds/${sound}.mp3`);
     audio.preload = 'auto';
+    audio.dataset.tapOnly = '1';
     audio.volume = CAT_VOLUME[sound] ?? 1;
     cat.traverse((o) => { if (o.isMesh) catHits.push({ mesh: o, audio }); });
   }
@@ -1870,7 +1898,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   const cat = hit && catHits.find((c) => c.mesh === hit.object);
   if (!cat || !sfxOn) return;
   cat.audio.currentTime = 0;
-  cat.audio.play().catch(() => {});
+  playSound(cat.audio);
 });
 
 // The train's rumble loops softly while it runs: quiet from the orbit view, closer (but still gentle)
@@ -1942,7 +1970,7 @@ function updateNearbySound(audio, loudness, dt) {
   audio.volume = THREE.MathUtils.clamp(THREE.MathUtils.lerp(audio.volume, target, k), 0, 1);
   if (!allowed || (target === 0 && audio.volume < 0.002)) {
     if (!audio.paused) audio.pause();
-  } else if (audio.paused) audio.play().catch(() => {});
+  } else if (audio.paused) playSound(audio);
 }
 const nearness = (d, near, far) => 1 - THREE.MathUtils.smoothstep(d, near, far);
 function updateBonfireSound(dt) {
@@ -2008,7 +2036,7 @@ function updateBlackCatSound(dt) {
       blackEye.armed = false;
       blackSound.currentTime = 0;
       blackSound.volume = BLACK_VOLUME;
-      blackSound.play().catch(() => {});
+      playSound(blackSound);
     }
   }
   // leaving the cab (or muting / pausing) mid-sound: fade it out rather than cut it
@@ -2051,7 +2079,7 @@ dayMusic.volume = 0;
 function updateDayMusic() {
   const day = 1 - night;
   const on = musicOn && soundUnlocked && dioramaReady && day > 0.01;
-  if (on && dayMusic.paused) dayMusic.play().catch(() => {});
+  if (on && dayMusic.paused) playSound(dayMusic);
   else if (!on && !dayMusic.paused) dayMusic.pause();
   dayMusic.volume = DAY_MUSIC_VOLUME * day;
 }
@@ -2081,7 +2109,7 @@ function startNightMusic() {
 }
 function updateNightMusic(dt) {
   const on = musicOn && soundUnlocked && dioramaReady && night > 0.01;
-  if (on && crickets.paused) crickets.play().catch(() => {});
+  if (on && crickets.paused) playSound(crickets);
   else if (!on && !crickets.paused) crickets.pause();
   crickets.volume = NIGHT_MUSIC.cricket * night;
   owl.volume = NIGHT_MUSIC.owl * night;
@@ -2094,7 +2122,7 @@ function updateNightMusic(dt) {
   if (owlWait <= 0) {
     owlWait = THREE.MathUtils.randFloat(OWL_GAP[0], OWL_GAP[1]);
     owl.currentTime = 0;
-    owl.play().catch(() => {});
+    playSound(owl);
   }
 }
 
