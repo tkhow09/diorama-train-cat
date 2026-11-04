@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60">
+  <g id="Group_7" data-name="Group 7" transform="translate(-1688 -927)">
+    <g id="Ellipse_1" data-name="Ellipse 1" transform="translate(1688 927)" fill="#fff" stroke="#4d4d4d" stroke-width="2">
+      <circle cx="30" cy="30" r="30" stroke="none"/>
+      <circle cx="30" cy="30" r="29" fill="none"/>
+    </g>
+    <path id="refresh-circle-svgrepo-com" d="M32,17A15,15,0,1,1,17,2,15,15,0,0,1,32,17ZM7.191,15.625a9.892,9.892,0,0,1,17.687-4.861A1.125,1.125,0,0,1,23.09,12.13a7.642,7.642,0,0,0-13.63,3.5H10a1.125,1.125,0,0,1,.795,1.921L9.047,19.3a1.125,1.125,0,0,1-1.59,0l-1.752-1.75A1.125,1.125,0,0,1,6.5,15.625ZM26.543,14.7a1.125,1.125,0,0,0-1.59,0L23.2,16.454a1.125,1.125,0,0,0,.8,1.921h.545A7.642,7.642,0,0,1,10.929,21.9a1.125,1.125,0,0,0-1.782,1.374,9.892,9.892,0,0,0,17.662-4.894H27.5a1.125,1.125,0,0,0,.8-1.921Z" transform="translate(1701 940)" fill="#4d4d4d" fill-rule="evenodd"/>
+  </g>
+</svg>

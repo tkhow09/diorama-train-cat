@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60">
+  <g id="Group_3" data-name="Group 3" transform="translate(-1232.806 -881.613)">
+    <g id="Ellipse_1" data-name="Ellipse 1" transform="translate(1232.806 881.613)" fill="#fff" stroke="#4d4d4d" stroke-width="2">
+      <circle cx="30" cy="30" r="30" stroke="none"/>
+      <circle cx="30" cy="30" r="29" fill="none"/>
+    </g>
+    <g id="eye-svgrepo-com" transform="translate(1247.807 899.613)">
+      <path id="Path_6" data-name="Path 6" d="M9.75,13.123A3.373,3.373,0,1,1,13.123,16.5,3.373,3.373,0,0,1,9.75,13.123Z" transform="translate(1.877 -1.123)" fill="#4d4d4d"/>
+      <path id="Path_7" data-name="Path 7" d="M2,16c0,2.459.637,3.287,1.912,4.944C6.458,24.251,10.727,28,17,28s10.542-3.749,13.088-7.056C31.363,19.287,32,18.459,32,16s-.637-3.287-1.912-4.944C27.542,7.749,23.273,4,17,4S6.458,7.749,3.912,11.056C2.637,12.713,2,13.541,2,16Zm15-5.625A5.625,5.625,0,1,0,22.625,16,5.625,5.625,0,0,0,17,10.375Z" transform="translate(-2 -4)" fill="#4d4d4d" fill-rule="evenodd"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60">
+  <g id="Group_14" data-name="Group 14" transform="translate(-3010 -1457)">
+    <g id="Ellipse_1" data-name="Ellipse 1" transform="translate(3010 1457)" fill="#fff" stroke="#4d4d4d" stroke-width="2">
+      <circle cx="30" cy="30" r="30" stroke="none"/>
+      <circle cx="30" cy="30" r="29" fill="none"/>
+    </g>
+    <path id="cube-box-fill-svgrepo-com" d="M27.576,12.978l5.557-3.163a3.466,3.466,0,0,0-.813-.576L21.9,3.3a5.462,5.462,0,0,0-2.69-.8,5.462,5.462,0,0,0-2.69.8l-3,1.7Zm-8.365,4.744,6.31-3.576-14-8L6.1,9.239a3.46,3.46,0,0,0-.813.576Zm1,16.936a1.3,1.3,0,0,0,.3-.133l11.571-6.591a3.613,3.613,0,0,0,2.128-3.724V12.7a4.946,4.946,0,0,0-.118-1.123L20.216,19.5Zm-2.01,0V19.5L4.329,11.574A4.942,4.942,0,0,0,4.211,12.7V24.209a3.613,3.613,0,0,0,2.128,3.724L17.91,34.525A1.3,1.3,0,0,0,18.206,34.658Z" transform="translate(3020.789 1468.5)" fill="#4d4d4d"/>
+  </g>
+</svg>

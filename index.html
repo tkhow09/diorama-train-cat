@@ -1,0 +1,1689 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diorama Train Cat</title>
+<!-- favicons (one cat-face design at each size): .ico for old browsers, PNGs for Chrome's tab and
+     bookmarks, the touch icon for iOS home screens, the manifest for Android -->
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<!-- link-preview image (shown by apps that unfurl links to this page) -->
+<meta property="og:title" content="Diorama Train Cat">
+<meta property="og:image" content="preview.webp">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  /* day sky: soft vignette, near-white in the middle fading to a pale sky blue at the edges */
+  body {
+    background: radial-gradient(ellipse at center, #ffffff 0%, #f5fafd 35%, #e2f1fa 70%, #cde6f6 100%);
+    font: 13px/1.4 system-ui, sans-serif;
+  }
+  canvas { display: block; position: relative; z-index: 1; }
+  /* Mr. Quincy (1001Fonts, free for personal use) */
+  @font-face {
+    font-family: 'Mr Quincy';
+    src: url('fonts/MrQuincy-Regular.otf') format('opentype');
+    font-display: swap;
+  }
+  /* title, top left; its colour follows day/night (--title-color is set from the script) */
+  #title {
+    position: fixed; left: 28px; top: 30px; z-index: 2; margin: 0; pointer-events: none;
+    font: normal 72px/1 'Mr Quincy', system-ui, sans-serif;
+    letter-spacing: 0.02em;
+    color: var(--title-color, #1e2b38);
+    transition: opacity .6s ease;
+  }
+  body.pov #title { opacity: 0; }   /* fades out while riding in the train */
+  @media (max-width: 600px) { #title { left: 16px; top: 14px; font-size: 38px; } }
+  /* night sky fades in over the day gradient; opacity is driven from the script */
+  #nightSky {
+    position: fixed; inset: 0; z-index: 0; opacity: 0; pointer-events: none;
+    /* same vignette at night: a lighter navy glow in the middle deepening to near-black blue at the edges */
+    background: radial-gradient(ellipse at center, #2b4568 0%, #1c3152 35%, #0f1f3b 70%, #060d1f 100%);
+  }
+  /* starfield drawn by the script, layered over the night gradient */
+  #stars { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* MODE / MUSIC / SFX toggles, top right: the toggle-on/off artwork (pill + rounded-square knob) scaled
+     from 76x33, with the state icon on the side opposite the knob. Colours follow day/night. */
+  #toggles {
+    position: fixed; right: 28px; top: 30px; z-index: 2;   /* same top as the title; above the canvas */
+    display: grid; grid-template-columns: auto auto; align-items: center; gap: 16px 14px;
+  }
+  .tlabel {
+    font: normal 28px/1 'Mr Quincy', system-ui, sans-serif; letter-spacing: .04em;
+    color: var(--title-color, #1e2b38); text-align: right; user-select: none;
+  }
+  .toggle {
+    position: relative; width: 70px; height: 30px; padding: 0; cursor: pointer;
+    border: 1px solid currentColor; border-radius: 9px;
+    background: var(--icon-bg, #fff); color: var(--icon-color, #4d4d4d);
+  }
+  .toggle:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+  .toggle .knob {
+    position: absolute; top: 5px; left: 7px; width: 18px; height: 18px; border-radius: 5px;
+    background: currentColor; transition: transform .25s ease;
+  }
+  .toggle.right .knob { transform: translateX(36px); }
+  .toggle .ticon {
+    position: absolute; top: 5px; right: 7px; width: 18px; height: 18px; transition: opacity .2s ease;
+  }
+  .toggle.right .ticon { right: auto; left: 7px; }
+  .toggle .ticon svg { width: 100%; height: 100%; display: block; }
+  @media (max-width: 600px) { #toggles { right: 16px; top: 18px; } }
+  /* icon controls, centred at the bottom; icon colour follows day/night (--icon-color, set from the script) */
+  #controls {
+    position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%); z-index: 2;
+    display: flex; gap: 18px;
+  }
+  #controls button {
+    width: 52px; height: 52px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
+    background: transparent; color: var(--icon-color, #4d4d4d);
+    transition: transform .15s ease, opacity .15s ease; opacity: .9;
+  }
+  #controls button:hover { transform: scale(1.08); opacity: 1; }
+  #controls button:active { transform: scale(0.96); }
+  #controls button:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+  #controls svg { width: 100%; height: 100%; display: block; }
+  /* loading screen: four paw prints always on screen in a staggered trail; a dark step walks across
+     them, so the two newest are dark and the older two light grey, like the reference. Covers the
+     page until the diorama is ready, then fades away */
+  #loading {
+    position: fixed; inset: 0; z-index: 10; display: grid; place-content: center; justify-items: center;
+    gap: 26px; color: #1e2b38;
+    background: radial-gradient(ellipse at center, #ffffff 0%, #f5fafd 35%, #e2f1fa 70%, #cde6f6 100%);
+    transition: opacity .8s ease, visibility .8s;
+  }
+  #loading.done { opacity: 0; visibility: hidden; }
+  #paws { position: relative; width: 210px; height: 52px; }
+  #paws svg {
+    position: absolute; width: 26px; height: 26px; color: #c3cad1;
+    animation: pawstep 1.2s linear infinite;   /* 4 steps x 0.3 s: one step lands every 0.3 s */
+  }
+  /* alternate left (low) and right (high) feet, toes pointing the way they walk */
+  #paws svg:nth-child(1) { left: 0;     top: 24px; rotate: 72deg;  animation-delay: 0s; }
+  #paws svg:nth-child(2) { left: 56px;  top: 2px;  rotate: 82deg;  animation-delay: .3s; }
+  #paws svg:nth-child(3) { left: 112px; top: 24px; rotate: 72deg;  animation-delay: .6s; }
+  #paws svg:nth-child(4) { left: 168px; top: 2px;  rotate: 82deg;  animation-delay: .9s; }
+  /* each paw: stamped dark, stays dark while the next step lands, then settles back to light grey */
+  @keyframes pawstep {
+    0%   { color: #1e2b38; transform: scale(1.2); }
+    6%   { color: #1e2b38; transform: scale(1); }   /* stamp */
+    40%  { color: #1e2b38; }   /* dark for two steps (0.6 s), so two paws are dark at any moment */
+    50%  { color: #c3cad1; }
+    100% { color: #c3cad1; }
+  }
+  #loadingLabel { font: normal 30px/1 'Mr Quincy', system-ui, sans-serif; letter-spacing: .06em; }
+  /* loaded, but the browser blocked sound until a click: the label turns into the way in */
+  #loading.ask { cursor: pointer; }
+  #loading.ask #loadingLabel { animation: askpulse 1.6s ease-in-out infinite; }
+  @keyframes askpulse { 50% { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) {
+    #paws svg { animation: none; }
+    #paws svg:nth-child(n+3) { color: #1e2b38; }
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="nightSky"><canvas id="stars"></canvas></div>
+<h1 id="title">DIORAMA TRAIN CAT</h1>
+<div id="loading" role="status" aria-live="polite">
+  <div id="paws" aria-hidden="true">
+    <svg viewBox="0 0 16 16"><use href="#paw"/></svg>
+    <svg viewBox="0 0 16 16"><use href="#paw"/></svg>
+    <svg viewBox="0 0 16 16"><use href="#paw"/></svg>
+    <svg viewBox="0 0 16 16"><use href="#paw"/></svg>
+  </div>
+  <div id="loadingLabel">LOADING</div>
+</div>
+<!-- paw print (icons/paws.svg), defined once and reused by the loader -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="paw" viewBox="0 0 16 16" fill="currentColor">
+    <path d="M7.25 2.75C7.25 3.7165 6.4665 4.5 5.5 4.5C4.5335 4.5 3.75 3.7165 3.75 2.75C3.75 1.7835 4.5335 1 5.5 1C6.4665 1 7.25 1.7835 7.25 2.75Z"/>
+    <path d="M4.25 6.75C4.25 7.7165 3.4665 8.5 2.5 8.5C1.5335 8.5 0.75 7.7165 0.75 6.75C0.75 5.7835 1.5335 5 2.5 5C3.4665 5 4.25 5.7835 4.25 6.75Z"/>
+    <path d="M10.5 4.5C11.4665 4.5 12.25 3.7165 12.25 2.75C12.25 1.7835 11.4665 1 10.5 1C9.5335 1 8.75 1.7835 8.75 2.75C8.75 3.7165 9.5335 4.5 10.5 4.5Z"/>
+    <path d="M15.25 6.75C15.25 7.7165 14.4665 8.5 13.5 8.5C12.5335 8.5 11.75 7.7165 11.75 6.75C11.75 5.7835 12.5335 5 13.5 5C14.4665 5 15.25 5.7835 15.25 6.75Z"/>
+    <path d="M2 15L1 12L6.23178 7.64018C6.72816 7.22653 7.35386 7 8 7C8.64614 7 9.27184 7.22653 9.76822 7.64018L15 12L14 15L8 14L2 15Z"/>
+  </symbol>
+</svg>
+<div id="controls">
+  <button id="play" title="Pause" aria-label="Pause"></button>
+  <button id="reset" title="Reset view" aria-label="Reset view"></button>
+  <button id="cam" title="Train POV" aria-label="Train POV"></button>
+</div>
+<div id="toggles">
+  <span class="tlabel" id="modeLabel">MODE</span>
+  <button id="mode" class="toggle right" role="switch" aria-checked="false" aria-labelledby="modeLabel"
+          title="Switch to night"><span class="ticon"></span><span class="knob"></span></button>
+  <span class="tlabel" id="musicLabel">MUSIC</span>
+  <button id="music" class="toggle right" role="switch" aria-checked="true" aria-labelledby="musicLabel"
+          title="Music off"><span class="ticon"></span><span class="knob"></span></button>
+  <span class="tlabel" id="sfxLabel">SFX</span>
+  <button id="sfx" class="toggle right" role="switch" aria-checked="true" aria-labelledby="sfxLabel"
+          title="Sound effects off"><span class="ticon"></span><span class="knob"></span></button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));   // 2x on retina costs ~1.8x the pixels for little visible gain
+renderer.setSize(innerWidth, innerHeight);
+renderer.setClearColor(0x000000, 0);           // transparent so the CSS gradient shows
+renderer.toneMapping = THREE.NeutralToneMapping;   // keeps the low-poly colours saturated
+renderer.toneMappingExposure = 0.9;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x6b5a45, 0.35);  // soft sky fill to match the background
+scene.add(hemi);
+// neutral studio reflections so metal parts (bridges, tower) keep their colour
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.2;   // kept low so the sun's shadows stay readable
+
+// long lens: keeps the board's edges parallel instead of splaying like a wide angle
+const orbitCam = new THREE.PerspectiveCamera(15, innerWidth / innerHeight, 0.1, 500);
+const controls = new OrbitControls(orbitCam, renderer.domElement);
+controls.enableDamping = true;
+// Showcase turntable: the view circles the board very slowly, like a product on a stand. It rests
+// while you drag or zoom and picks up again a few seconds after you let go; pause stops it too.
+const SPIN_SPEED = 0.5;      // OrbitControls units: 2.0 is one turn per 30 s, so 0.5 is one per 2 minutes
+const SPIN_RESUME = 3;       // seconds after the last touch before it starts turning again
+let spinHold = 0, entered = false;   // the turntable waits until the loading screen has lifted
+controls.autoRotateSpeed = SPIN_SPEED;
+controls.addEventListener('start', () => { spinHold = Infinity; });
+controls.addEventListener('end', () => { spinHold = SPIN_RESUME; });
+const panBounds = new THREE.Box3();   // set once the board loads; keeps the view centre over the board
+const SWIPE_MARGIN = 0.65;   // sky left beside the board's end when a swipe reaches it (world units)
+
+// Trackpad: a mostly-horizontal two-finger swipe slides the view left/right along the board;
+// vertical swipes and pinches still reach OrbitControls and zoom. Capture phase so this runs first.
+renderer.domElement.addEventListener('wheel', (e) => {
+  // in the cab, a two-finger swipe looks around instead (grab-style, like a panorama)
+  if (lookActive()) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!e.ctrlKey) turnLook(-e.deltaX * LOOK_SWIPE, -e.deltaY * LOOK_SWIPE);
+    return;
+  }
+  if (!controls.enabled || e.ctrlKey || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  spinHold = SPIN_RESUME;
+  // pixels -> world units at the pivot's depth, so the board tracks the fingers at any zoom
+  const depth = orbitCam.position.distanceTo(controls.target);
+  const perPx = (2 * depth * Math.tan(THREE.MathUtils.degToRad(orbitCam.fov) / 2)) / renderer.domElement.clientHeight;
+  const right = new THREE.Vector3().setFromMatrixColumn(orbitCam.matrixWorld, 0);
+  right.y = 0; right.normalize();   // slide along the board, not up into the sky
+  const move = right.multiplyScalar(e.deltaX * perPx);
+  // stop when the board's end reaches the screen edge (plus a small margin), not when the view centre
+  // does; that would leave half a screen of empty sky. If the whole board fits, keep it centred.
+  if (!panBounds.isEmpty()) {
+    const halfView = (perPx * renderer.domElement.clientWidth) / 2;
+    const lo = panBounds.min.x + halfView - SWIPE_MARGIN, hi = panBounds.max.x - halfView + SWIPE_MARGIN;
+    const x = controls.target.x + move.x;
+    const clampedX = lo > hi ? (panBounds.min.x + panBounds.max.x) / 2 : THREE.MathUtils.clamp(x, lo, hi);
+    move.multiplyScalar(move.x ? (clampedX - controls.target.x) / move.x : 0);
+  }
+  controls.target.add(move);
+  orbitCam.position.add(move);
+  controls.update();
+}, { passive: false, capture: true });
+
+const REMOVE = [
+  'Tree_0294',   // pine at the river's left bank, blocking the front bridge
+  // Blender's own tower beacon: the page draws its own blinking one in the same spot (addBeacon)
+  'Tower_Beacon', 'Tower_Beacon_Halo', 'Tower_Beacon_Light',
+];
+
+// Trees nudged clear of poles that pierced their foliage (world x/z offsets)
+const MOVE = {
+  Tree_0219: [-0.045, -0.014],     // overhead-wire mast Pole_10 went 35 mm into it
+  TownTree_017: [0.024, -0.006],   // a station post went 14 mm into it
+};
+
+// Bonfire_Light's flicker is a driver on its energy in Blender, which glTF can't carry: same formula here
+const FIRE_INTENSITY = 0.05;   // three.js intensity per Blender watt
+let fireLight = null;
+const flames = [];
+function updateFire(frame) {
+  if (!fireLight) return;
+  const f = frame * 0.45;
+  const watts = 3 + 0.8 * Math.sin(f * 0.7) + 0.5 * Math.sin(f * 1.9 + 1) + 0.3 * Math.sin(f * 3.7);
+  fireLight.intensity = watts * FIRE_INTENSITY * night;   // only burns at night
+}
+
+let mixer, povCam, usePov = false, playing = true;
+let beacon = null, sunLight = null;
+const lamps = { lights: [], glass: new Set() };
+const windows = [];   // glass that glows warm at night: cabin, town houses, the big brick building
+const WINDOW_MATERIALS = ['mat_window', 'window', 'DarkGrey.001'];
+
+// Day / night. `night` eases between 0 (day) and 1 (night); every mode-dependent light reads it.
+const DAY = { sun: new THREE.Color(0xfff1dc), sunI: 3.2, sky: new THREE.Color(0xbfe3ff), ground: new THREE.Color(0x6b5a45),
+              hemiI: 0.35, env: 0.2 };
+const NIGHT = { sun: new THREE.Color(0x9db4ff), sunI: 0.45, sky: new THREE.Color(0x2c3f6b), ground: new THREE.Color(0x15151c),
+                hemiI: 0.18, env: 0.04 };
+const LAMP_NIGHT_BOOST = 0.9, WINDOW_GLOW = 2.2, RIVER_NIGHT = 0.28, MODE_SECONDS = 1.5;
+let night = 0, nightTarget = 0;
+const riverBright = { value: 1 };
+const nightSkyEl = document.getElementById('nightSky');
+const TITLE_DAY = new THREE.Color(0x1e2b38), TITLE_NIGHT = new THREE.Color(0xe6eef8);
+const ICON_DAY = new THREE.Color(0x4d4d4d), ICON_NIGHT = new THREE.Color(0xdde6f2);
+const ICON_BG_DAY = new THREE.Color(0xffffff), ICON_BG_NIGHT = new THREE.Color(0x1c3152);
+
+// Night starfield: a seeded scatter laid out to the window size (rebuilt on resize so it stays
+// crisp), denser toward the top; a few brighter stars get a soft halo. Each star twinkles on its
+// own speed and phase; the canvas is only redrawn while the night sky is showing.
+const STAR_COUNT = 300, STAR_FPS = 30;
+const starfield = { stars: [], ctx: null, last: -1 };
+function layoutStars() {
+  const c = document.getElementById('stars'), dpr = Math.min(devicePixelRatio, 2);
+  c.width = innerWidth * dpr; c.height = innerHeight * dpr;
+  starfield.ctx = c.getContext('2d');
+  starfield.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  let seed = 11;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+  starfield.stars = [...Array(STAR_COUNT)].map(() => {
+    const big = rand() < 0.08;
+    return {
+      x: rand() * innerWidth, y: Math.pow(rand(), 1.6) * innerHeight,   // bias toward the top
+      big, r: big ? 1.2 + rand() * 0.8 : 0.55 + rand() * 0.75,
+      a: big ? 0.95 : 0.5 + rand() * 0.45,
+      tint: rand() < 0.2 ? '210,225,255' : rand() < 0.1 ? '255,240,215' : '255,255,255',
+      speed: 0.8 + rand() * 2.6, phase: rand() * Math.PI * 2,
+      depth: rand() < 0.3 ? 0.75 : 0.35,   // how deep its twinkle dips: some shimmer strongly
+    };
+  });
+  starfield.last = -1;
+  drawStars(0, true);
+}
+function drawStars(t, force = false) {
+  if (!starfield.ctx || (!force && night < 0.01)) return;
+  if (!force && t - starfield.last < 1 / STAR_FPS) return;
+  starfield.last = t;
+  const g = starfield.ctx;
+  g.clearRect(0, 0, innerWidth, innerHeight);
+  for (const s of starfield.stars) {
+    const tw = 1 - s.depth * (0.5 + 0.5 * Math.sin(t * s.speed + s.phase));   // 1 = full brightness
+    if (s.big) {   // soft halo
+      const h = g.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * 4);
+      h.addColorStop(0, `rgba(${s.tint},${0.35 * tw})`); h.addColorStop(1, `rgba(${s.tint},0)`);
+      g.fillStyle = h; g.beginPath(); g.arc(s.x, s.y, s.r * 4, 0, Math.PI * 2); g.fill();
+    }
+    g.fillStyle = `rgba(${s.tint},${s.a * tw})`;
+    g.beginPath(); g.arc(s.x, s.y, s.r, 0, Math.PI * 2); g.fill();
+  }
+}
+layoutStars();
+addEventListener('resize', layoutStars);
+
+function applyMode(k) {
+  if (sunLight) {
+    sunLight.color.lerpColors(DAY.sun, NIGHT.sun, k);
+    sunLight.intensity = THREE.MathUtils.lerp(DAY.sunI, NIGHT.sunI, k);
+  }
+  hemi.color.lerpColors(DAY.sky, NIGHT.sky, k);
+  hemi.groundColor.lerpColors(DAY.ground, NIGHT.ground, k);
+  hemi.intensity = THREE.MathUtils.lerp(DAY.hemiI, NIGHT.hemiI, k);
+  scene.environmentIntensity = THREE.MathUtils.lerp(DAY.env, NIGHT.env, k);
+  nightSkyEl.style.opacity = k;
+  // title swaps from dark ink on the day sky to pale on the night sky
+  document.documentElement.style.setProperty('--title-color', '#' + TITLE_DAY.clone().lerp(TITLE_NIGHT, k).getHexString());
+  document.documentElement.style.setProperty('--icon-color', '#' + ICON_DAY.clone().lerp(ICON_NIGHT, k).getHexString());
+  document.documentElement.style.setProperty('--icon-bg', '#' + ICON_BG_DAY.clone().lerp(ICON_BG_NIGHT, k).getHexString());
+  // lights stay in the scene at intensity 0 by day, so switching never triggers a shader recompile
+  for (const l of lamps.lights) l.intensity = l.userData.onIntensity * LAMP_NIGHT_BOOST * k;
+  for (const m of lamps.glass) m.emissiveIntensity = m.userData.onIntensity * k;
+  for (const m of windows) m.emissiveIntensity = WINDOW_GLOW * k;
+  for (const f of flames) f.visible = k > 0.35;
+  updateStationLights(k);
+  shopGlow.value = SHOP_GLOW * k;
+  if (train.windowMat) train.windowMat.emissiveIntensity = TRAIN_GLOW * k;
+  if (train.light) train.light.intensity = TRAIN_LIGHT * k;
+  if (train.lampMat) train.lampMat.emissiveIntensity = THREE.MathUtils.lerp(HEADLAMP.glow[0], HEADLAMP.glow[1], k);
+  if (train.beam) train.beam.intensity = THREE.MathUtils.lerp(HEADLAMP.beam[0], HEADLAMP.beam[1], k);
+  riverBright.value = THREE.MathUtils.lerp(1, RIVER_NIGHT, k);
+}
+
+// Fluorescent tubes hung under both station canopies. Each platform has two rows of pink pillars
+// with a slatted wall between them; the tubes go just on the track side of the inner row (out over
+// the open platform), in the middle of each gap between neighbouring pillars, hanging just under
+// the roof, so they never touch a pillar, its T-shaped top or the wall. Off by day; at night they
+// flicker on while the mode fades in, then hold steady.
+const TUBE_LEN = 0.04, TUBE_Y = 0.252, TUBE_GLOW = 3, TUBE_LIGHT = 0.12;
+const TUBE_OUT = 0.016;   // how far out from the inner pillar row, toward the track
+const TUBE_HANG = 0.014;  // how far the fittings hang below the roof on their wires
+const station = { tubeMat: null, lights: [], platforms: [] };
+
+// pink pillars (thin vertical pieces rising from the platform decks), grouped per platform
+function findPlatforms(stationGroup) {
+  const posts = [];
+  stationGroup.traverse((m) => {
+    if (!m.isMesh) return;
+    const b = new THREE.Box3().setFromObject(m), s = b.getSize(new THREE.Vector3());
+    if (s.y > 0.04 && s.x < 0.02 && s.z < 0.02 && b.min.y < 0.2) posts.push(b.getCenter(new THREE.Vector3()));
+  });
+  const platforms = [];
+  for (const p of posts) {
+    let pl = platforms.find((q) => Math.abs(q.zMid - p.z) < 0.08);
+    if (!pl) platforms.push(pl = { zMid: p.z, posts: [] });
+    pl.posts.push(p);
+    pl.zMid = pl.posts.reduce((s, q) => s + q.z, 0) / pl.posts.length;   // midway between its two rows
+  }
+  // the track runs between the platforms; each platform's inner pillar row is the one facing it
+  const trackZ = platforms.reduce((s, p) => s + p.zMid, 0) / platforms.length;
+  for (const pl of platforms) {
+    const xs = [...new Set(pl.posts.map((p) => +p.x.toFixed(3)))].sort((a, b) => a - b);
+    pl.tubeXs = xs.slice(1).map((x, i) => (x + xs[i]) / 2);   // middle of each gap between pillars
+    const rows = [...new Set(pl.posts.map((p) => +p.z.toFixed(3)))];
+    const inner = rows.reduce((a, b) => (Math.abs(b - trackZ) < Math.abs(a - trackZ) ? b : a));
+    pl.tubeZ = inner + Math.sign(trackZ - inner) * TUBE_OUT;
+  }
+  return platforms;
+}
+
+// Cast rays straight up along a tube's length and return the lowest structure above it (rafters or
+// roof boards), so the tube can hang just under it.
+function ceilingAbove(stationGroup, x, z, halfLen) {
+  const rc = new THREE.Raycaster();
+  const up = new THREE.Vector3(0, 1, 0);
+  let ceiling = Infinity;
+  for (let i = 0; i <= 6; i++) {
+    for (const dz of [-0.004, 0, 0.004]) {
+      rc.set(new THREE.Vector3(x - halfLen + (2 * halfLen * i) / 6, 0.2, z + dz), up);
+      rc.far = 0.2;
+      const hit = rc.intersectObject(stationGroup, true)[0];
+      if (hit) ceiling = Math.min(ceiling, hit.point.y);
+    }
+  }
+  return ceiling;
+}
+
+function addStationLights(stationGroup) {
+  if (!stationGroup) return;
+  station.tubeMat = new THREE.MeshStandardMaterial({ color: 0xf4f8ff, emissive: 0xe6f2ff, emissiveIntensity: 0 });
+  const tubeGeo = new THREE.CylinderGeometry(0.0022, 0.0022, TUBE_LEN, 8).rotateZ(Math.PI / 2);
+  const housingGeo = new THREE.BoxGeometry(TUBE_LEN + 0.005, 0.003, 0.008);
+  const housingMat = new THREE.MeshStandardMaterial({ color: 0x3b3f44, roughness: 0.7 });
+  stationGroup.updateMatrixWorld(true);
+  station.platforms = findPlatforms(stationGroup);
+  const wireGeo = new THREE.CylinderGeometry(0.0004, 0.0004, 1, 5);   // unit height, scaled per wire
+  const wireMat = new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.8 });
+  const wireRay = new THREE.Raycaster(), UP = new THREE.Vector3(0, 1, 0);
+  wireRay.far = 0.1;
+  for (const pl of station.platforms) {
+    const z = pl.tubeZ, half = (TUBE_LEN + 0.005) / 2;
+    // one tidy row per platform: all fittings hang the same drop below the lowest structure above any
+    // of them, on two wires each, like suspended lamps
+    const ceiling = Math.min(...pl.tubeXs.map((x) => ceilingAbove(stationGroup, x, z, half)));
+    const housingTop = Math.min(TUBE_Y + 0.005, ceiling - 0.0005) - TUBE_HANG;
+    pl.tubeY = housingTop - 0.0052;
+    for (const x of pl.tubeXs) {
+      const tube = new THREE.Mesh(tubeGeo, station.tubeMat);
+      const housing = new THREE.Mesh(housingGeo, housingMat);
+      housing.position.set(x, housingTop - 0.0015, z);
+      tube.position.set(x, pl.tubeY, z);
+      tube.castShadow = housing.castShadow = false;
+      scene.add(tube, housing);
+      // two wires near the fitting's ends, each running up to the roof surface right above it
+      for (const wx of [x - TUBE_LEN * 0.35, x + TUBE_LEN * 0.35]) {
+        // straight up from the fitting at the wire's exact spot, so it meets the surface right above it
+        wireRay.set(new THREE.Vector3(wx, housingTop + 0.0005, z), UP);
+        const hit = wireRay.intersectObject(stationGroup, true)[0];
+        const top = hit ? hit.point.y : Infinity;
+        const len = (isFinite(top) ? top : housingTop + TUBE_HANG) - housingTop;
+        const wire = new THREE.Mesh(wireGeo, wireMat);
+        wire.scale.y = len;
+        wire.position.set(wx, housingTop + len / 2, z);
+        wire.castShadow = false;
+        scene.add(wire);
+      }
+    }
+    // a few cool-white lights along each platform rather than one per tube, to keep the light count low
+    const xs = pl.tubeXs;
+    for (const x of [xs[0], xs[Math.floor(xs.length / 2)], xs[xs.length - 1]]) {
+      const l = new THREE.PointLight(0xdcecff, 0, 0.22, 2);
+      l.position.set(x, pl.tubeY - 0.02, z);
+      scene.add(l); station.lights.push(l);
+    }
+  }
+}
+function updateStationLights(k) {
+  if (!station.tubeMat) return;
+  // fluorescent start-up: stutter while switching on, steady once fully night
+  const warming = nightTarget === 1 && k < 1;
+  const flick = warming ? (Math.random() < 0.35 ? 0.15 : 1) : 1;
+  station.tubeMat.emissiveIntensity = TUBE_GLOW * k * flick;
+  for (const l of station.lights) l.intensity = TUBE_LIGHT * k * flick;
+}
+
+// Low-poly day clouds: clusters of flat-shaded, squashed icosahedrons scattered over the board itself,
+// higher than the radio tower's tip (~1.8). They drift along the board and wrap back within its
+// length. A fixed seed keeps the same sky on every load.
+const CLOUD_SPEED = 0.05;   // drift in world units/s
+const CLOUD_X = [-3.6, 3.6];   // the board's length: clouds drift across it and wrap at the ends
+// Spread evenly without rows or columns: every cloud gets its own slot along the board, and its depth
+// steps by the golden ratio (a low-discrepancy sequence), so neighbours along the board always land
+// at very different depths. From the camera that reads as an even, natural scatter.
+const CLOUD_COUNT = 13;
+const CLOUD_Z = [-1.25, 1.15], CLOUD_Y = [1.55, 1.75];   // depth across the board; height: just under the tower tip (~1.8)
+const clouds = { group: new THREE.Group(), mat: null };
+// colour and glow by day and by night: at night they stay, a soft moonlit grey-blue
+const CLOUD_DAY = { color: new THREE.Color(0xffffff), emissive: new THREE.Color(0xdfeaf5) };
+const CLOUD_NIGHT = { color: new THREE.Color(0xdde3f0), emissive: new THREE.Color(0x7a87a8) };
+function addClouds() {
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+  clouds.mat = new THREE.MeshStandardMaterial({
+    color: 0xffffff, emissive: 0xdfeaf5, emissiveIntensity: 0.35, roughness: 1, flatShading: true, transparent: true });
+  const puffGeo = new THREE.IcosahedronGeometry(1, 0);
+  const between = ([a, b]) => a + rand() * (b - a);
+  for (let i = 0; i < CLOUD_COUNT; i++) {
+    const cloud = new THREE.Group();
+    const puffs = 4 + Math.floor(rand() * 3);
+    for (let p = 0; p < puffs; p++) {
+      const puff = new THREE.Mesh(puffGeo, clouds.mat);
+      const s = 0.12 + rand() * 0.16;
+      puff.scale.set(s * (1.1 + rand() * 0.4), s * (0.55 + rand() * 0.2), s);
+      // spread along the cloud's length, bigger puffs toward the middle
+      const t = puffs === 1 ? 0 : p / (puffs - 1) - 0.5;
+      puff.position.set(t * 0.55 + (rand() - 0.5) * 0.08, (0.5 - Math.abs(t)) * 0.08, (rand() - 0.5) * 0.12);
+      puff.rotation.set(rand() * 3, rand() * 3, rand() * 3);
+      puff.castShadow = puff.receiveShadow = false;
+      cloud.add(puff);
+    }
+    const size = 0.55 + rand() * 0.45;
+    cloud.scale.setScalar(size);
+    const u = (i + 0.5 + (rand() - 0.5) * 0.5) / CLOUD_COUNT;              // own slot along the board
+    const v = (0.5 + i * 0.6180339887 + (rand() - 0.5) * 0.12) % 1;         // golden-ratio depth
+    const lerp = (r, t) => r[0] + (r[1] - r[0]) * t;
+    cloud.position.set(lerp(CLOUD_X, u), between(CLOUD_Y), lerp(CLOUD_Z, (v + 1) % 1));
+    cloud.userData = { drift: true, baseY: cloud.position.y, phase: rand() * Math.PI * 2 };
+    clouds.group.add(cloud);
+  }
+  scene.add(clouds.group);
+}
+function updateClouds(dt, k) {
+  if (!clouds.mat) return;
+  clouds.mat.color.lerpColors(CLOUD_DAY.color, CLOUD_NIGHT.color, k);   // darken with night
+  clouds.mat.emissive.lerpColors(CLOUD_DAY.emissive, CLOUD_NIGHT.emissive, k);
+  if (!playing) return;
+  clouds.time = (clouds.time || 0) + dt;
+  for (const c of clouds.group.children) {
+    if (c.userData.drift) {
+      c.position.x += CLOUD_SPEED * dt * (0.8 + c.scale.x * 0.3);   // bigger clouds drift a bit faster
+      if (c.position.x > CLOUD_X[1]) c.position.x -= CLOUD_X[1] - CLOUD_X[0];
+    } else {
+      c.position.y = c.userData.baseY + Math.sin(clouds.time * 0.3 + c.userData.phase) * 0.04;   // gentle bob
+    }
+  }
+}
+
+// Level-crossing signals: each lamp head's red lens is one mesh holding both lenses; split it into
+// its two halves and flash them alternately, like a real crossing. Blinks day and night.
+const CROSSING_PERIOD = 1.0, CROSSING_ON = 3.0, CROSSING_OFF = 0.05;
+const crossing = { lamps: [null, null] };
+function addCrossingLamps(root) {
+  crossing.lamps = [0, 1].map(() => new THREE.MeshStandardMaterial({
+    color: 0x7a1a14, emissive: 0xff2a1a, emissiveIntensity: CROSSING_OFF, roughness: 0.4 }));
+  const split = new WeakSet();
+  root.traverse((post) => {
+    if (!/^Crossing_/.test(post.name) || /^Crossing_/.test(post.parent?.name ?? '')) return;
+    const meshes = [];
+    post.traverse((m) => m.isMesh && meshes.push(m));
+    const housing = meshes.find((m) => /^mat23/.test(m.material.name));   // black lamp housings
+    if (!housing) return;
+    const hy = new THREE.Box3().setFromObject(housing).getCenter(new THREE.Vector3()).y;
+    // the red lens sits at the housing's height (the barrier's red stripes are lower)
+    const lens = meshes.find((m) => /^mat8/.test(m.material.name) &&
+      Math.abs(new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).y - hy) < 0.004);
+    if (!lens) return;
+    const g = lens.geometry;
+    if (!split.has(g)) {
+      split.add(g);
+      g.computeBoundingBox();
+      const bb = g.boundingBox, c = bb.getCenter(new THREE.Vector3()), s = bb.getSize(new THREE.Vector3());
+      const axis = s.x > s.z ? 'x' : 'z';   // the two lenses sit side by side along the longer axis
+      const pos = g.attributes.position, idx = g.index ? g.index.array : [...Array(pos.count).keys()];
+      const sides = [[], []];
+      for (let i = 0; i < idx.length; i += 3) {
+        const mid = (pos.getComponent(idx[i], axis === 'x' ? 0 : 2) + pos.getComponent(idx[i + 1], axis === 'x' ? 0 : 2) +
+                     pos.getComponent(idx[i + 2], axis === 'x' ? 0 : 2)) / 3;
+        sides[mid < c[axis] ? 0 : 1].push(idx[i], idx[i + 1], idx[i + 2]);
+      }
+      g.setIndex([...sides[0], ...sides[1]]);
+      g.clearGroups();
+      g.addGroup(0, sides[0].length, 0);
+      g.addGroup(sides[0].length, sides[1].length, 1);
+    }
+    lens.material = crossing.lamps;
+  });
+}
+function updateCrossing(t) {
+  if (!crossing.lamps[0]) return;
+  const a = (t % CROSSING_PERIOD) < CROSSING_PERIOD / 2;
+  crossing.lamps[0].emissiveIntensity = a ? CROSSING_ON : CROSSING_OFF;
+  crossing.lamps[1].emissiveIntensity = a ? CROSSING_OFF : CROSSING_ON;
+}
+
+// The shop's windows are painted into its 8 x 4 texture atlas. Ray-sampling the shop front showed the
+// glass and window interiors use cells 14 (grey glass), 24 (streaked glass), 25 (amber interior) and
+// 21 (the cream sign behind the display window); walls, trim and awning use other cells.
+// At night, glow warm wherever the shop samples one of those cells.
+const SHOP_GLOW = 1.1, SHOP_GLASS_CELLS = [14, 21, 24, 25];
+const shopGlow = { value: 0 };
+function addShopGlow(root) {
+  root.traverse((o) => {
+    if (!o.isMesh || !o.material.map || !/citybits/i.test(o.material.name)) return;
+    o.material = o.material.clone();
+    o.material.onBeforeCompile = (shader) => {
+      shader.uniforms.uShopGlow = shopGlow;
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform float uShopGlow;')
+        .replace('#include <emissivemap_fragment>', /* glsl */ `#include <emissivemap_fragment>
+          {
+            float cell = floor(clamp(vMapUv.y, 0.0, 0.999) * 4.0) * 8.0 + floor(clamp(vMapUv.x, 0.0, 0.999) * 8.0);
+            float glass = 0.0;
+            ${SHOP_GLASS_CELLS.map((c) => `glass = max(glass, 1.0 - step(0.5, abs(cell - ${c.toFixed(1)})));`).join('\n            ')}
+            totalEmissiveRadiance += vec3(1.0, 0.64, 0.3) * glass * uShopGlow;
+          }`);
+    };
+  });
+}
+
+// Performance: the board arrives as ~2,500 separate meshes (every tree, sleeper and post), which
+// means ~2,500 draw calls per frame, and as many again for the shadow pass. Everything that never
+// moves is baked into world space and merged into one mesh per material, so the GPU gets a few
+// hundred calls instead. Left alone: anything animated (tram, cats, flames, smoke), skinned or
+// multi-material meshes, meshes with children, and hidden ones, since the page drives those.
+// The compressed model stores vertex data as small normalised integers; baking a world transform
+// into those would overflow them, so widen every attribute back to floats first.
+function toFloat(g) {
+  for (const [name, a] of Object.entries(g.attributes)) {
+    if (a.array instanceof Float32Array && !a.isInterleavedBufferAttribute) continue;
+    const out = new Float32Array(a.count * a.itemSize);
+    for (let i = 0; i < a.count; i++) for (let c = 0; c < a.itemSize; c++) out[i * a.itemSize + c] = a.getComponent(i, c);
+    g.setAttribute(name, new THREE.BufferAttribute(out, a.itemSize));
+  }
+  return g;
+}
+function mergeStatic(root, animations) {
+  root.updateMatrixWorld(true);
+  const animated = new Set();
+  for (const clip of animations) for (const t of clip.tracks) animated.add(THREE.PropertyBinding.parseTrackName(t.name).nodeName);
+  const isAnimated = (o) => { for (let p = o; p && p !== root; p = p.parent) if (animated.has(p.name) || !p.visible) return true; return false; };
+  const groups = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh || o.isInstancedMesh || Array.isArray(o.material) || o.children.length) return;
+    const g = o.geometry;
+    if (Object.keys(g.morphAttributes).length || g.groups.length > 1 || isAnimated(o)) return;
+    const flip = o.matrixWorld.determinant() < 0;
+    if (flip && !g.index) return;   // mirrored and unindexed: can't fix its winding cheaply, keep it
+    const attrs = Object.entries(g.attributes).map(([k, a]) => `${k}${a.itemSize}${a.array.constructor.name}${a.normalized}`).sort().join();
+    const key = [o.material.uuid, attrs, !!g.index, o.castShadow, o.receiveShadow].join('|');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ o, flip });
+  });
+  const toLocal = root.matrixWorld.clone().invert();
+  let merged = 0;
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const geos = list.map(({ o, flip }) => {
+      const g = toFloat(o.geometry.clone()).applyMatrix4(o.matrixWorld);
+      if (flip) {   // baking a mirror turns triangles inside out; swap two corners to turn them back
+        const ix = g.index.array;
+        for (let i = 0; i < ix.length; i += 3) { const t = ix[i + 1]; ix[i + 1] = ix[i + 2]; ix[i + 2] = t; }
+      }
+      return g;
+    });
+    const geo = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (!geo) continue;
+    const { o: first } = list[0];
+    const mesh = new THREE.Mesh(geo, first.material);
+    mesh.name = `merged_${first.material.name || 'mat'}`;
+    mesh.castShadow = first.castShadow;
+    mesh.receiveShadow = first.receiveShadow;
+    toLocal.decompose(mesh.position, mesh.quaternion, mesh.scale);   // geometry is in world space
+    root.add(mesh);
+    for (const { o } of list) o.removeFromParent();
+    merged += list.length;
+  }
+  return merged;
+}
+
+// The tram: its windows glow cool white at night, and a soft white light rides along inside it,
+// so it also lights its surroundings (and the tunnel walls as it passes through).
+const TRAIN_GLOW = 2.0, TRAIN_LIGHT = 0.025;   // just a faint glow around the tram
+// The yellow bulb on the tram's nose (above the cab windows) lights up as a warm headlamp: the bulb
+// glows, and a soft spot throws a pool of light down the track ahead. Brighter at night.
+const HEADLAMP = { mesh: 'group1554354678', color: 0xffc94a, glow: [0.6, 3.0], beam: [0.15, 1.4] };   // [day, night]
+const train = { windowMat: null, light: null, lampMat: null, beam: null };
+function addTrainLights(root) {
+  const tram = root.getObjectByName('Tram');
+  if (!tram) return;
+  tram.traverse((m) => {
+    if (!m.isMesh || m.material.name !== 'mat16') return;   // the tram's window glass
+    train.windowMat ??= Object.assign(m.material.clone(), { emissiveIntensity: 0 });
+    train.windowMat.emissive.set(0xeaf3ff);
+    m.material = train.windowMat;
+  });
+  tram.updateWorldMatrix(true, true);
+  const centre = tram.worldToLocal(new THREE.Box3().setFromObject(tram).getCenter(new THREE.Vector3()));
+  train.light = new THREE.PointLight(0xe8f0ff, 0, 0.45, 2);
+  train.light.position.copy(centre);
+  tram.add(train.light);
+
+  const bulb = tram.getObjectByName(HEADLAMP.mesh);
+  if (!bulb) return;
+  train.lampMat = bulb.material.clone();
+  train.lampMat.emissive.set(HEADLAMP.color);
+  bulb.material = train.lampMat;
+  bulb.castShadow = false;
+  bulb.geometry.computeBoundingBox();
+  const at = bulb.geometry.boundingBox.getCenter(new THREE.Vector3()).applyMatrix4(bulb.matrix);   // in tram space
+  // the tram runs along its local +x (its POV camera sits at the nose); aim well down, so the
+  // wide cone washes the track and ground just ahead of the nose as well as further along
+  train.beam = new THREE.SpotLight(HEADLAMP.color, 0, 1.6, THREE.MathUtils.degToRad(40), 0.8, 1.2);
+  train.beam.position.copy(at);
+  train.beam.target.position.copy(at).add(new THREE.Vector3(1, -0.85, 0));
+  tram.add(train.beam, train.beam.target);
+}
+
+// A very light, soft shadow floating under the board: a blurred rounded rectangle on a plane
+// just below the base, so the diorama reads as hovering over the background.
+const BOARD_SHADOW = { opacity: 0.28, drop: 0.5, spread: 1.1 };
+function addBoardShadow(root) {
+  const terrain = root.getObjectByName('Terrain');
+  const b = new THREE.Box3().setFromObject(terrain || root);
+  const w = (b.max.x - b.min.x) * BOARD_SHADOW.spread, d = (b.max.z - b.min.z) * BOARD_SHADOW.spread;
+  const cv = document.createElement('canvas');
+  const blur = 48, cw = 512, ch = Math.round(cw * d / w) + blur * 2;
+  cv.width = cw + blur * 2; cv.height = ch;
+  const ctx = cv.getContext('2d');
+  ctx.filter = `blur(${blur * 0.6}px)`;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.roundRect(blur * 1.4, blur * 1.4, cv.width - blur * 2.8, cv.height - blur * 2.8, blur);
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(cv);
+  const plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(w * cv.width / cw, d * cv.height / (ch - blur * 2)),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: BOARD_SHADOW.opacity, depthWrite: false, toneMapped: false }),
+  );
+  plane.rotation.x = -Math.PI / 2;
+  plane.position.set((b.min.x + b.max.x) / 2, b.min.y - BOARD_SHADOW.drop, (b.min.z + b.max.z) / 2);
+  plane.renderOrder = -1;
+  scene.add(plane);
+}
+
+// Fireflies (night only): glowing points scattered over the board, each hovering a little above the
+// terrain under it, drifting in small loops and blinking on its own rhythm. Drawn additively on the
+// GPU, sized in world units so they scale with zoom, and hidden behind trees and buildings.
+const FIREFLY_COUNT = 220, FIREFLY_SIZE = 0.06, FIREFLY_BRIGHT = 1.8, FIREFLY_HEIGHT = [0.03, 0.2];
+// a few more among the trees on the tunnel mountain (a separate mesh from the terrain)
+const FIREFLY_CAVE_COUNT = 36;
+const fireflies = { points: null, uniforms: { uTime: { value: 0 }, uNight: { value: 0 }, uViewH: { value: 1 } } };
+function addFireflies(root) {
+  const terrain = root.getObjectByName('Terrain');
+  if (!terrain) return;
+  terrain.updateWorldMatrix(true, false);
+  const tb = new THREE.Box3().setFromObject(terrain);
+  let seed = 23;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+  const rc = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
+  const mountain = root.getObjectByName('Mountain_Range');
+  const ground = mountain ? [terrain, mountain] : [terrain];
+  const pos = [], phase = [], speed = [], blink = [];
+  // keep clear of the two truss bridges: a firefly drifting through the girders looks wrong. Each
+  // bridge's box grows by the drift loop (0.06 across, 0.025 up/down) plus the glow's own radius.
+  const keepOut = [];
+  root.traverse((o) => {
+    if (/^Truss_Bridge_\d+$/.test(o.name)) keepOut.push(new THREE.Box3().setFromObject(o).expandByVector(new THREE.Vector3(0.1, 0.06, 0.1)));
+  });
+  // drop a firefly onto whatever ground is under (x, z); onMountain picks which surface it may land on
+  const place = (x, z, onMountain) => {
+    rc.set(new THREE.Vector3(x, tb.max.y + 2, z), down);
+    const hit = rc.intersectObjects(ground, false)[0];
+    if (!hit || (hit.object === mountain) !== onMountain) return false;
+    const p = new THREE.Vector3(x, hit.point.y + THREE.MathUtils.lerp(FIREFLY_HEIGHT[0], FIREFLY_HEIGHT[1], rand()), z);
+    if (keepOut.some((b) => b.containsPoint(p))) return false;
+    pos.push(p.x, p.y, p.z);
+    phase.push(rand() * Math.PI * 2);
+    speed.push(0.4 + rand() * 0.8);    // drift speed
+    blink.push(0.9 + rand() * 2.2);    // blink rate
+    return true;
+  };
+  for (let n = 0, tries = 0; n < FIREFLY_COUNT && tries < FIREFLY_COUNT * 6; tries++) {
+    const x = THREE.MathUtils.lerp(tb.min.x + 0.1, tb.max.x - 0.1, rand());
+    const z = THREE.MathUtils.lerp(tb.min.z + 0.1, tb.max.z - 0.1, rand());
+    if (place(x, z, false)) n++;
+  }
+  const mtnTrees = [];
+  root.traverse((o) => { if (o.name.startsWith('MtnTree')) mtnTrees.push(o.getWorldPosition(new THREE.Vector3())); });
+  for (let n = 0, tries = 0; mtnTrees.length && n < FIREFLY_CAVE_COUNT && tries < FIREFLY_CAVE_COUNT * 10; tries++) {
+    const t = mtnTrees[Math.floor(rand() * mtnTrees.length)];
+    if (place(t.x + (rand() - 0.5) * 0.12, t.z + (rand() - 0.5) * 0.12, true)) n++;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aPhase', new THREE.Float32BufferAttribute(phase, 1));
+  g.setAttribute('aSpeed', new THREE.Float32BufferAttribute(speed, 1));
+  g.setAttribute('aBlink', new THREE.Float32BufferAttribute(blink, 1));
+  const m = new THREE.ShaderMaterial({
+    uniforms: fireflies.uniforms,
+    // add light, and add the same amount of opacity: the canvas is see-through over the sky, so a
+    // sprite that wrote full alpha would show its dark square corners against the background
+    transparent: true, depthWrite: false, toneMapped: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneFactor,
+    vertexShader: /* glsl */ `
+      attribute float aPhase, aSpeed, aBlink;
+      uniform float uTime, uViewH;
+      varying float vGlow;
+      void main() {
+        float t = uTime;
+        vec3 p = position + vec3(sin(t * aSpeed * 0.7 + aPhase) * 0.06,
+                                 sin(t * aSpeed + aPhase * 1.3) * 0.025,
+                                 cos(t * aSpeed * 0.6 + aPhase * 0.7) * 0.06);
+        // blink: mostly dark, then a soft pulse of light
+        vGlow = smoothstep(0.1, 1.0, sin(t * aBlink + aPhase * 3.1));
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = ${FIREFLY_SIZE.toFixed(4)} * projectionMatrix[1][1] * uViewH * 0.5 / -mv.z;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float uNight;
+      varying float vGlow;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        float halo = pow(smoothstep(0.5, 0.0, d), 2.0);
+        float core = smoothstep(0.14, 0.0, d);
+        vec3 col = vec3(0.8, 1.0, 0.35) * halo * 0.7 + vec3(1.0, 1.0, 0.75) * core;
+        vec3 c = col * vGlow * uNight * ${FIREFLY_BRIGHT.toFixed(2)};
+        gl_FragColor = vec4(c, min(max(c.r, max(c.g, c.b)), 1.0));
+      }`,
+  });
+  fireflies.points = new THREE.Points(g, m);
+  fireflies.points.frustumCulled = false;
+  fireflies.points.visible = false;
+  scene.add(fireflies.points);
+}
+function updateFireflies(dt) {
+  if (!fireflies.points) return;
+  fireflies.points.visible = night > 0.01;
+  if (!fireflies.points.visible) return;
+  if (playing) fireflies.uniforms.uTime.value += dt;
+  fireflies.uniforms.uNight.value = night;
+  fireflies.uniforms.uViewH.value = renderer.getDrawingBufferSize(new THREE.Vector2()).y;
+}
+
+function updateMode(dt) {
+  if (night === nightTarget) return;
+  const step = dt / MODE_SECONDS;
+  night = nightTarget > night ? Math.min(nightTarget, night + step) : Math.max(nightTarget, night - step);
+  applyMode(night);
+}
+
+// Flowing river: Blender animates its water with frame-driven noise/wave nodes, which glTF can't
+// carry, so Blender bakes that exact colour top-down into a seamless 4 s loop (river.mp4).
+// The shader maps the video onto the river by world position and derives the ripple bumps from it.
+// RIVER_BOUNDS are the river's Blender world XY bounds printed by the bake (three: x = X, z = -Y).
+const RIVER_BOUNDS = { minX: -2.25618, maxX: -0.80692, minY: -1.3, maxY: 1.3 };
+// Blender's viewport shows this water close to its raw colour, so the river is mostly its baked
+// colour with only part of the scene lighting (shadows, sun) mixed in, and no tone mapping.
+const RIVER_LIT = 0.25;
+// Blender's Flow_Waves modifier (cyclic, X+Y rings from the object origin), run live on the GPU
+// with the exact values from the .blend, so it moves the surface just as (subtly) as Blender does.
+const RIVER_WAVE = { speed: 0.03, height: 0.003, width: 0.12, narrowness: 1.2 };
+const riverWaveFrame = { value: 300 };   // start past the first wavefront so the rings are already everywhere
+
+function waveGLSL() {
+  const w = RIVER_WAVE;
+  return /* glsl */ `
+    uniform float uWaveFrame;
+    // Blender MOD_wave: gaussian ring, cyclic, displacing along local Z (three's local +Y)
+    float blenderWave(vec2 p, float frame) {
+      const float w = ${w.width.toFixed(4)}, narrow = ${w.narrowness.toFixed(4)};
+      float minfac = 1.0 / exp(w * narrow * w * narrow);
+      float a = length(p) - frame * ${w.speed.toFixed(4)};
+      float x = a - w, y = 2.0 * w;
+      a = (x - y * trunc(x / y)) + w;   // C fmodf, as Blender uses
+      if (a <= -w || a >= w) return 0.0;
+      a *= narrow;
+      return ${w.height.toFixed(4)} * (1.0 / exp(a * a) - minfac);
+    }`;
+}
+const RIVER_SPEED = 0.5;   // 1 = Blender's real-time flow; lower is calmer
+const riverVideo = Object.assign(document.createElement('video'), {
+  src: 'river.mp4', muted: true, loop: true, playsInline: true, crossOrigin: 'anonymous' });
+riverVideo.defaultPlaybackRate = riverVideo.playbackRate = RIVER_SPEED;
+riverVideo.addEventListener('loadedmetadata', () => { riverVideo.playbackRate = RIVER_SPEED; });
+function makeWater() {
+  const tex = new THREE.VideoTexture(riverVideo);
+  // video frames reach the shader as raw sRGB values (no automatic decode), so decode them there
+  tex.colorSpace = THREE.NoColorSpace;
+  riverVideo.play().catch(() => {});
+  const b = RIVER_BOUNDS;
+  // double-sided: the river mesh's faces point down; the shader supplies its own upward normal
+  // low specular: the grey studio reflections were washing the blue out
+  const m = new THREE.MeshPhysicalMaterial({
+    roughness: 0.45, metalness: 0, specularIntensity: 0.15, side: THREE.DoubleSide, toneMapped: false });
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uRiver = { value: tex };
+    shader.uniforms.uRiverBright = riverBright;   // dims the raw baked colour at night
+    shader.uniforms.uWaveFrame = riverWaveFrame;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWaterPos;
+        varying vec2 vWaveP;
+        ${waveGLSL()}`)
+      .replace('#include <begin_vertex>', /* glsl */ `#include <begin_vertex>
+        // glTF local (x, y, z) = Blender local (x, z, -y)
+        vWaveP = vec2(position.x, -position.z);
+        transformed.y += blenderWave(vWaveP, uWaveFrame);`)
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvWaterPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', /* glsl */ `#include <common>
+        varying vec3 vWaterPos;
+        varying vec2 vWaveP;
+        ${waveGLSL()}
+        uniform sampler2D uRiver;
+        uniform float uRiverBright;
+        vec2 riverUv(vec3 p) {
+          return vec2((p.x - ${b.minX.toFixed(5)}) / ${(b.maxX - b.minX).toFixed(5)},
+                      (-p.z - ${b.minY.toFixed(5)}) / ${(b.maxY - b.minY).toFixed(5)});
+        }`)
+      .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
+        vec2 ruv = riverUv(vWaterPos);
+        vec3 wcol = sRGBTransferEOTF(texture2D(uRiver, ruv)).rgb;
+        diffuseColor.rgb = wcol;`)
+      .replace('#include <opaque_fragment>', /* glsl */ `
+        outgoingLight = mix(wcol * uRiverBright, outgoingLight, ${RIVER_LIT.toFixed(3)});
+        #include <opaque_fragment>`)
+      .replace('#include <normal_fragment_maps>', /* glsl */ `#include <normal_fragment_maps>
+        {
+          // Blender bumps the surface by the same wave pattern: rebuild that from the video's brightness
+          vec2 px = vec2(1.0 / 576.0, 1.0 / 1024.0);
+          float l  = dot(texture2D(uRiver, ruv - vec2(px.x, 0.0)).rgb, vec3(0.333));
+          float r  = dot(texture2D(uRiver, ruv + vec2(px.x, 0.0)).rgb, vec3(0.333));
+          float dn = dot(texture2D(uRiver, ruv - vec2(0.0, px.y)).rgb, vec3(0.333));
+          float up = dot(texture2D(uRiver, ruv + vec2(0.0, px.y)).rgb, vec3(0.333));
+          vec3 nW = vec3(-(r - l), 1.2, (up - dn));   // v grows toward -z; gentle like Blender's 0.6 bump
+          normal = normalize((viewMatrix * vec4(normalize(nW), 0.0)).xyz);
+        }`);
+  };
+  return m;
+}
+
+// Inside the mountain the sky fill and reflections would still light everything evenly, so fade
+// ambient light by distance from the tunnel's centreline (the Tunnel_Probe empties from Blender).
+// Patching the shared lighting chunk covers every lit material: tube, track, and the train itself.
+const TUNNEL_RADIUS = 0.2, TUNNEL_FADE = 0.08, TUNNEL_AMBIENT = 0.06;
+function darkenTunnel(root) {
+  const pts = [];
+  for (let i = 0; ; i++) {
+    const p = root.getObjectByName(`Tunnel_Probe_${String(i).padStart(2, '0')}`);
+    if (!p) break;
+    pts.push(p.getWorldPosition(new THREE.Vector3()));
+  }
+  if (pts.length < 2) return;
+  // pull the ends in a little so darkness ramps up just inside each portal
+  const inset = (a, b) => a.clone().lerp(b, Math.min(0.1 / a.distanceTo(b), 0.5));
+  pts[0] = inset(pts[0], pts[1]);
+  pts[pts.length - 1] = inset(pts[pts.length - 1], pts[pts.length - 2]);
+  const list = pts.map((p) => `vec2(${p.x.toFixed(4)}, ${p.z.toFixed(4)})`).join(', ');
+  const top = Math.max(...pts.map((p) => p.y)) + TUNNEL_RADIUS;
+
+  THREE.ShaderChunk.lights_fragment_end += /* glsl */ `
+  {
+    const vec2 tunnelPts[${pts.length}] = vec2[](${list});
+    vec3 wp = cameraPosition + transpose(mat3(viewMatrix)) * (-vViewPosition);
+    float d = 1e3;
+    for (int i = 0; i < ${pts.length - 1}; i++) {
+      vec2 a = tunnelPts[i], ab = tunnelPts[i + 1] - a;
+      float h = clamp(dot(wp.xz - a, ab) / dot(ab, ab), 0.0, 1.0);
+      d = min(d, length(wp.xz - a - ab * h));
+    }
+    float inside = (1.0 - smoothstep(${TUNNEL_RADIUS.toFixed(3)}, ${(TUNNEL_RADIUS + TUNNEL_FADE).toFixed(3)}, d))
+                 * (1.0 - smoothstep(${top.toFixed(3)}, ${(top + 0.05).toFixed(3)}, wp.y));
+    float amb = mix(1.0, ${TUNNEL_AMBIENT.toFixed(3)}, inside);
+    reflectedLight.indirectDiffuse *= amb;
+    reflectedLight.indirectSpecular *= amb;
+  }`;
+
+  // the tunnel lamps came through nearly off; give them warm, local pools of light
+  root.traverse((o) => {
+    if (o.isPointLight && o.name.startsWith('Tunnel_Light')) {
+      o.color.set(0xffc27a); o.intensity = 0.16; o.distance = 0.4; o.decay = 2;
+    }
+  });
+}
+
+// sun high over the right-hand end of the board; its shadow frustum is fitted to the board
+function addSun(box) {
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = box.getSize(new THREE.Vector3()).length() / 2;
+  const sun = new THREE.DirectionalLight(0xfff1dc, 3.2);
+  const dir = new THREE.Vector3(-0.45, 1, 0.8).normalize();   // above, left of centre, toward the viewer: shadows fall to the right
+  sun.position.copy(center).addScaledVector(dir, radius * 2);
+  sun.target.position.copy(center);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(4096, 4096);
+  Object.assign(sun.shadow.camera, {
+    left: -radius, right: radius, top: radius, bottom: -radius, near: radius * 0.5, far: radius * 3.5 });
+  sun.shadow.camera.updateProjectionMatrix();
+  sun.shadow.bias = -0.0003;
+  sun.shadow.normalBias = 0.01;
+  scene.add(sun, sun.target);
+  sunLight = sun;   // doubles as moonlight at night (applyMode)
+}
+
+// red aviation warning light on the radio tower's highest vertex
+const BEACON_RADIUS = 0.017;
+function addBeacon(tower) {
+  tower.updateWorldMatrix(true, false);
+  const p = tower.geometry.attributes.position, v = new THREE.Vector3();
+  const pts = [];
+  let top = -Infinity;
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i).applyMatrix4(tower.matrixWorld);
+    pts.push(v.clone()); top = Math.max(top, v.y);
+  }
+  // centre on the cap: the middle of everything near the top, not the single highest (off-centre) vertex
+  const cap = new THREE.Box3();
+  for (const q of pts) if (q.y > top - 0.03) cap.expandByPoint(q);
+  const tip = cap.getCenter(new THREE.Vector3());
+  tip.y = top + BEACON_RADIUS * 0.8;
+
+  const bulbMat = new THREE.MeshBasicMaterial({ color: 0x3a0000 });
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(BEACON_RADIUS, 20, 14), bulbMat);
+
+  // soft radial halo so the flash reads from across the board
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,60,40,1)'); grad.addColorStop(0.3, 'rgba(255,0,0,.55)'); grad.addColorStop(1, 'rgba(255,0,0,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+    // normal blending: additive would turn pink against the blue sky
+    map: new THREE.CanvasTexture(c), depthWrite: false, transparent: true, toneMapped: false }));
+  halo.scale.setScalar(BEACON_RADIUS * 10);
+
+  const light = new THREE.PointLight(0xff2010, 0, 0.6, 2);   // tints the top of the tower when lit
+
+  const group = new THREE.Group();
+  group.position.copy(tip);
+  group.add(bulb, halo, light);
+  scene.add(group);
+  beacon = { bulbMat, halo, light };
+}
+
+// one ~0.25s flash every 1.5s, with a quick fade in/out
+function updateBeacon(t) {
+  if (!beacon) return;
+  const phase = (t % 1.5) / 0.25;
+  const k = phase < 1 ? Math.sin(phase * Math.PI) : 0;
+  beacon.bulbMat.color.setRGB(0.1 + 0.9 * k, 0.01 + 0.11 * k, 0.01);
+  beacon.halo.material.opacity = k;
+  beacon.halo.visible = k > 0.01;
+  beacon.light.intensity = 0.6 * k;
+}
+let home = { pos: new THREE.Vector3(), target: new THREE.Vector3() };
+const loadingEl = document.getElementById('loading');
+
+// diorama.glb is meshopt-compressed (geometry, shape keys and animation) with WebP textures:
+// ~10 MB instead of ~33 MB. The uncompressed export is kept in source/ (not published).
+new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) => {
+  const root = gltf.scene;
+  scene.add(root);
+
+  // objects removed from the scene (by Blender name, without dots)
+  for (const name of REMOVE) root.getObjectByName(name)?.removeFromParent();
+  for (const [name, [dx, dz]] of Object.entries(MOVE)) {
+    const o = root.getObjectByName(name);
+    if (o) { o.position.x += dx; o.position.z += dz; o.updateMatrixWorld(true); }
+  }
+
+  const tower = root.getObjectByName('RadioTower_mesh');
+  if (tower) addBeacon(tower);
+  root.traverse((o) => {
+    if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+    // Blender exports lights in lm/W (x683); bring them back to three.js-friendly units
+    if (o.isLight) o.intensity /= 683;
+    // lamp posts: their point lights plus the glowing glass, so they can be switched together
+    if (o.isPointLight && o.name.startsWith('Lamp_Light')) lamps.lights.push(o);
+    if (o.isMesh && o.material.name === 'mat_lamp_glass') lamps.glass.add(o.material);
+  });
+  for (const m of lamps.glass) m.userData.onIntensity = m.emissiveIntensity;
+  for (const l of lamps.lights) l.userData.onIntensity = l.intensity;
+  // window glass gets its own warm emissive copy, so nothing else sharing the material lights up
+  root.traverse((o) => {
+    if (o.isMesh && WINDOW_MATERIALS.includes(o.material.name)) {
+      o.material = o.material.clone();
+      o.material.emissive.set(0xffc46b);
+      o.material.emissiveIntensity = 0;
+      windows.push(o.material);
+    }
+  });
+
+  darkenTunnel(root);
+
+  // three.js reads only UV sets 0-3; imported models with many UV layers (the lucky cat) can have
+  // their baked texture on set 4+, which would render nothing. Move such sets into a free slot.
+  const TEX_SLOTS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap'];
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    const texs = TEX_SLOTS.map((k) => o.material[k]).filter(Boolean);
+    for (const t of texs) {
+      if (t.channel <= 3) continue;
+      const src = o.geometry.getAttribute(`texcoord_${t.channel}`);
+      const used = new Set(texs.map((x) => x.channel));
+      const free = [0, 1, 2, 3].find((c) => !used.has(c));
+      if (!src || free === undefined) continue;
+      o.geometry.setAttribute(free ? `uv${free}` : 'uv', src);
+      t.channel = free;
+    }
+  });
+
+  // campfire: flicker the light; flames and smoke glow, so they shouldn't throw shadows
+  root.traverse((o) => {
+    if (o.isPointLight && o.name.startsWith('Bonfire_Light')) {
+      fireLight = o; o.distance = 0.8; o.decay = 2; o.castShadow = false;
+    }
+    // (compression moved some meshes into an unnamed child of their named node, so check both)
+    if (o.isMesh && /^(Bonfire_Flame|Chimney_Smoke)/.test(o.name || o.parent?.name || '')) o.castShadow = false;
+    if (/^Bonfire_Flame/.test(o.name) && !o.parent.name.startsWith('Bonfire_Flame')) flames.push(o);
+  });
+  addStationLights(root.getObjectByName('Station'));
+  addCrossingLamps(root);
+  findCrossingSignals(root);
+  addShopGlow(root);
+  addTrainLights(root);
+  addClouds();
+  addFireflies(root);
+  addBoardShadow(root);
+  addCatSounds(root);
+  applyMode(night);
+
+  const river = root.getObjectByName('River_Water');
+  if (river) river.material = makeWater();
+  mergeStatic(root, gltf.animations);
+
+  addSun(new THREE.Box3().setFromObject(root));
+
+  // front view, slightly raised (Blender's -Y side), framed so the board's length fills the width
+  const box = new THREE.Box3().setFromObject(root);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const elev = THREE.MathUtils.degToRad(19);
+  const azim = THREE.MathUtils.degToRad(-16);  // three-quarter view from the left, so the left end sits nearer
+  const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(orbitCam.fov) / 2) * orbitCam.aspect);
+  const dist = Math.max(size.x / 2 / Math.tan(hfov / 2), size.y * 2) * 1.12 + size.z / 2;
+  center.y -= size.y * 0.15;   // aim a little low, so the board sits a touch above the middle
+  center.x = 0; center.z = 0;   // the board is centred on the origin
+  orbitCam.position.copy(center).add(new THREE.Vector3(
+    Math.sin(azim) * Math.cos(elev) * dist, Math.sin(elev) * dist, Math.cos(azim) * Math.cos(elev) * dist));
+  controls.maxPolarAngle = THREE.MathUtils.degToRad(88);   // don't orbit under the board
+  controls.minDistance = size.x * 0.15;
+  controls.maxDistance = dist * 2.5;
+  controls.target.copy(center);
+  controls.update();
+  home = { pos: orbitCam.position.clone(), target: center.clone() };
+  panBounds.copy(box);
+  controls.addEventListener('change', () => {
+    // sliding past the board's edge: move camera and pivot back together so the view doesn't jump
+    const clamped = controls.target.clone().clamp(panBounds.min, panBounds.max);
+    const off = clamped.sub(controls.target);
+    if (off.lengthSq() > 0) { controls.target.add(off); orbitCam.position.add(off); }
+  });
+
+  povCam = gltf.cameras.find((c) => c.name === 'POV_Camera');
+  if (!povCam) document.getElementById('cam').remove();
+
+  mixer = new THREE.AnimationMixer(root);
+  for (const clip of gltf.animations) mixer.clipAction(clip).play();
+
+  // reveal once the first frame with the diorama has been drawn (or after a moment, for tabs
+  // opened in the background where frames don't run), then drop the overlay
+  let revealed = false;
+  const reveal = () => {
+    if (revealed) return;
+    revealed = true;
+    dioramaReady = true;   // the train sound waits for this
+    const lift = () => {
+      // start from the default view however long the loading screen was up
+      if (!entered) { orbitCam.position.copy(home.pos); controls.target.copy(home.target); controls.update(); }
+      entered = true;
+      loadingEl.classList.add('done');
+      setTimeout(() => loadingEl.remove(), 900);
+    };
+    // Start the train sound with the reveal. If the browser blocks sound until the visitor
+    // interacts, keep the screen up as a "click to enter": that click starts the sound (via the
+    // unlock listeners) and lifts the screen.
+    trainSound.play().then(lift, (err) => {
+      if (err.name !== 'NotAllowedError') return lift();
+      soundUnlocked = false;
+      for (const ev of UNLOCK_EVENTS) addEventListener(ev, unlockSound, { capture: true, passive: true });
+      loadingEl.classList.add('ask');
+      document.getElementById('loadingLabel').textContent = 'CLICK TO ENTER';
+      loadingEl.addEventListener('pointerdown', lift, { once: true });
+      addEventListener('keydown', lift, { once: true });
+    });
+  };
+  // Compile every shader and upload every texture up front. Otherwise each part of the board's far
+  // side compiles the first time the spin turns it into view, and the turntable stalls for a moment.
+  // compile() skips hidden things, so briefly show the night-only ones (fireflies etc.) too.
+  const hidden = [];
+  scene.traverse((o) => { if (!o.visible) { hidden.push(o); o.visible = true; } });
+  scene.traverse((o) => {
+    for (const m of [o.material].flat()) if (m) for (const v of Object.values(m)) if (v?.isTexture && !v.isVideoTexture) renderer.initTexture(v);
+  });
+  (renderer.compileAsync ? renderer.compileAsync(scene, orbitCam) : Promise.resolve(renderer.compile(scene, orbitCam)))
+    .catch(() => {}).finally(() => {
+      for (const o of hidden) o.visible = false;
+      requestAnimationFrame(() => requestAnimationFrame(reveal));
+    });
+  setTimeout(reveal, 4000);
+}, undefined, (err) => {
+  document.getElementById('loadingLabel').textContent = 'COULD NOT LOAD THE DIORAMA';
+  document.getElementById('paws').style.display = 'none';
+  console.error(err);
+});
+
+// Icon buttons: the SVGs are loaded inline with their grey (#4d4d4d) swapped for currentColor and
+// their white circle fill for --icon-bg, so both can swap at night (pale glyph on a dark disc).
+const ICONS = {};
+const iconsReady = Promise.all(['pause', 'play', 'pov', 'diorama', 'restart',
+  'day-mode', 'night-mode', 'music-on', 'music-off', 'sfx-on', 'sfx-off'].map(async (name) => {
+  const svg = await (await fetch(`icons/${name}.svg`)).text();
+  ICONS[name] = svg.replace(/#4d4d4d/gi, 'currentColor')
+    .replace(/fill="#fff(?:fff)?"/gi, 'style="fill: var(--icon-bg, #fff)"')
+    .replace(/\swidth="60"\sheight="60"/, '');
+}));
+function setIcon(id, name, label) {
+  const b = document.getElementById(id);
+  if (!b) return;
+  b.innerHTML = ICONS[name] ?? '';
+  b.title = label; b.setAttribute('aria-label', label);
+}
+// Toggle switches: knob on one side, state icon on the other.
+//   MODE  — day: knob right, sun on the left;  night: knob left, moon on the right.
+//   MUSIC — on: knob right, note on the left;   off: knob left, slashed note on the right.
+//           Day: a song on a loop. Night: crickets with an owl now and then. They crossfade.
+//   SFX   — on: knob right, speaker on the left; off: knob left, muted speaker on the right.
+//           Mutes the train's rumble and the cats.
+let musicOn = true, sfxOn = true;
+function setToggle(id, right, icon, checked, nextTitle) {
+  const t = document.getElementById(id);
+  t.classList.toggle('right', right);
+  t.querySelector('.ticon').innerHTML = ICONS[icon] ?? '';
+  t.setAttribute('aria-checked', String(checked));
+  t.title = nextTitle;
+}
+const showMode = () => setToggle('mode', !nightTarget, nightTarget ? 'night-mode' : 'day-mode',
+  !!nightTarget, nightTarget ? 'Switch to day' : 'Switch to night');
+const showMusic = () => setToggle('music', musicOn, musicOn ? 'music-on' : 'music-off',
+  musicOn, musicOn ? 'Music off' : 'Music on');
+const showSfx = () => setToggle('sfx', sfxOn, sfxOn ? 'sfx-on' : 'sfx-off',
+  sfxOn, sfxOn ? 'Sound effects off' : 'Sound effects on');
+
+iconsReady.then(() => {
+  setIcon('play', 'pause', 'Pause');
+  setIcon('cam', 'pov', 'Train POV');
+  setIcon('reset', 'restart', 'Reset view');
+  showMode(); showMusic(); showSfx();
+});
+
+document.getElementById('play').onclick = () => {
+  playing = !playing;
+  setIcon('play', playing ? 'pause' : 'play', playing ? 'Pause' : 'Play');
+  if (playing) riverVideo.play().catch(() => {}); else riverVideo.pause();
+};
+// smooth fly between the orbit view and the train cab, like an eased camera cut in Blender
+const flyCam = new THREE.PerspectiveCamera(15, innerWidth / innerHeight, 0.01, 500);
+let fly = null;   // { from: pose, to: camera, t0, dur }
+const flyLook = new THREE.Vector3();   // where the flying camera is looking right now
+const FLY_SECONDS = 3.2;
+const ease = (t) => -(Math.cos(Math.PI * t) - 1) / 2;   // ease-in-out sine: gentle start and landing
+const smooth = (a, b, t) => THREE.MathUtils.smoothstep(t, a, b);
+
+// a camera's pose plus the point it looks at (the orbit pivot, or a little ahead of the cab)
+function poseOf(cam) {
+  cam.updateWorldMatrix(true, false);
+  const pos = cam.getWorldPosition(new THREE.Vector3());
+  const quat = cam.getWorldQuaternion(new THREE.Quaternion());
+  const look = cam === orbitCam ? controls.target.clone()
+    : cam === flyCam ? flyLook.clone()
+    : pos.clone().addScaledVector(new THREE.Vector3(0, 0, -1).applyQuaternion(quat), 0.5);
+  return { pos, quat, look, fov: cam.fov, near: cam.near };
+}
+
+function startFly(toPov) {
+  // leaving the cab starts from wherever the passenger is looking
+  const current = fly ? flyCam : (usePov ? lookCam : orbitCam);
+  fly = { from: poseOf(current), to: toPov ? povCam : orbitCam, t0: clock.elapsedTime, dur: FLY_SECONDS };
+  usePov = toPov;
+  controls.enabled = false;
+}
+
+function updateFly() {
+  if (!fly) return;
+  const t = Math.min((clock.elapsedTime - fly.t0) / fly.dur, 1), k = ease(t);
+  const to = poseOf(fly.to);   // live: the cab keeps moving with the train
+  // keep looking at a point that glides between the two subjects, so the board stays in frame mid-flight
+  flyLook.lerpVectors(fly.from.look, to.look, k);
+  // approach at a constant rate: distance to the look point shrinks by the same ratio each moment
+  const logLerp = (a, b) => Math.exp(THREE.MathUtils.lerp(Math.log(a), Math.log(b), k));
+  const dist = logLerp(fly.from.pos.distanceTo(fly.from.look), to.pos.distanceTo(to.look));
+  const along = new THREE.Vector3().lerpVectors(fly.from.pos, to.pos, k).sub(flyLook).normalize();
+  flyCam.position.copy(flyLook).addScaledVector(along, dist);
+  flyCam.up.set(0, 1, 0);
+  flyCam.lookAt(flyLook);
+  // settle onto the exact start/end orientation at the very ends of the move
+  const q = flyCam.quaternion.clone();
+  flyCam.quaternion.slerpQuaternions(fly.from.quat, q, smooth(0, 0.2, t));
+  flyCam.quaternion.slerp(to.quat, smooth(0.8, 1, t));
+  // widen the lens at the same steady rate, so there is no zoom-in-then-out near the cab
+  const halfTan = (p) => Math.tan(THREE.MathUtils.degToRad(p.fov) / 2);
+  flyCam.fov = THREE.MathUtils.radToDeg(2 * Math.atan(logLerp(halfTan(fly.from), halfTan(to))));
+  flyCam.near = Math.min(fly.from.near, to.near);
+  flyCam.aspect = innerWidth / innerHeight;
+  flyCam.updateProjectionMatrix();
+  if (t >= 1) { fly = null; controls.enabled = !usePov; }
+}
+
+// Look around from the cab: a camera riding on the POV camera with a yaw/pitch offset. Drag (or a
+// two-finger swipe) grabs the view like a panorama; double-click eases back to straight ahead.
+const LOOK_PITCH = THREE.MathUtils.degToRad(35);
+// How far you can turn before the tram's own front corners / headlights (or, tilting up, its roof
+// and pantograph) come into view. Measured per tilt by rendering the cab view with and without the
+// tram and finding the first angle where any pixel changes; each limit stops 3 degrees short of it.
+const LOOK_YAW_BY_PITCH = [[-35, 37], [-25, 40], [-15, 45], [0, 50], [15, 52], [25, 46], [35, 33]];   // [pitch, max yaw] in degrees
+function maxYaw(pitch) {
+  const p = THREE.MathUtils.radToDeg(pitch), t = LOOK_YAW_BY_PITCH;
+  let i = 0;
+  while (i < t.length - 2 && p > t[i + 1][0]) i++;
+  const k = THREE.MathUtils.clamp((p - t[i][0]) / (t[i + 1][0] - t[i][0]), 0, 1);
+  return THREE.MathUtils.degToRad(THREE.MathUtils.lerp(t[i][1], t[i + 1][1], k));
+}
+const LOOK_DRAG = 0.004, LOOK_SWIPE = 0.003;   // radians per pixel
+const lookCam = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 500);
+const look = { yaw: 0, pitch: 0, drag: null, recentre: false };
+const lookActive = () => usePov && !fly && povCam;
+const UP_AXIS = new THREE.Vector3(0, 1, 0), RIGHT_AXIS = new THREE.Vector3(1, 0, 0);
+
+function turnLook(dYaw, dPitch) {
+  look.recentre = false;
+  look.pitch = THREE.MathUtils.clamp(look.pitch + dPitch, -LOOK_PITCH, LOOK_PITCH);
+  const lim = maxYaw(look.pitch);
+  look.yaw = THREE.MathUtils.clamp(look.yaw + dYaw, -lim, lim);
+}
+
+function updateLookCam(dt) {
+  if (look.recentre) {   // ease back to straight ahead
+    const k = 1 - Math.exp(-dt * 6);
+    look.yaw *= 1 - k; look.pitch *= 1 - k;
+    if (Math.abs(look.yaw) + Math.abs(look.pitch) < 1e-3) { look.yaw = look.pitch = 0; look.recentre = false; }
+  }
+  povCam.updateWorldMatrix(true, false);
+  povCam.getWorldPosition(lookCam.position);
+  povCam.getWorldQuaternion(lookCam.quaternion);
+  // turn around the world's up axis (so the horizon stays level), tilt around the camera's own side axis
+  lookCam.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP_AXIS, look.yaw))
+    .multiply(new THREE.Quaternion().setFromAxisAngle(RIGHT_AXIS, look.pitch));
+  lookCam.fov = povCam.fov; lookCam.near = povCam.near;
+  lookCam.aspect = innerWidth / innerHeight;
+  lookCam.updateProjectionMatrix();
+}
+
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!lookActive()) return;
+  look.drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!look.drag || e.pointerId !== look.drag.id) return;
+  turnLook((e.clientX - look.drag.x) * LOOK_DRAG, (e.clientY - look.drag.y) * LOOK_DRAG);
+  look.drag.x = e.clientX; look.drag.y = e.clientY;
+});
+const endDrag = (e) => { if (look.drag && e.pointerId === look.drag.id) look.drag = null; };
+renderer.domElement.addEventListener('pointerup', endDrag);
+renderer.domElement.addEventListener('pointercancel', endDrag);
+renderer.domElement.addEventListener('dblclick', () => { if (lookActive()) look.recentre = true; });
+
+document.getElementById('cam').onclick = (e) => {
+  if (!usePov) { look.yaw = look.pitch = 0; look.recentre = false; }   // arrive looking straight ahead
+  startFly(!usePov);
+  if (usePov) { primeSound(bonfireSound); primeSound(purrSound); primeSound(blackSound); primeSound(crossingSound); }   // its fade-in starts later, outside this click
+  document.body.classList.toggle('pov', usePov);
+  // in the cab, the button offers the way back to the whole diorama
+  setIcon('cam', usePov ? 'diorama' : 'pov', usePov ? 'Orbit view' : 'Train POV');
+};
+document.getElementById('mode').onclick = () => {
+  nightTarget = nightTarget ? 0 : 1;
+  showMode();
+  if (nightTarget) startNightMusic();   // start inside the click, where every browser allows sound
+  else if (musicOn) dayMusic.play().catch(() => {});
+};
+document.getElementById('music').onclick = () => {
+  musicOn = !musicOn;   // the night sounds follow (updateNightMusic)
+  showMusic();
+  if (musicOn && nightTarget) startNightMusic();
+  if (musicOn && !nightTarget) dayMusic.play().catch(() => {});
+};
+document.getElementById('sfx').onclick = () => {
+  sfxOn = !sfxOn;   // the train sound follows on the next frame (updateTrainSound)
+  if (!sfxOn) for (const c of catHits) c.audio.pause();
+  showSfx();
+};
+document.getElementById('reset').onclick = () => {
+  orbitCam.position.copy(home.pos); controls.target.copy(home.target); controls.update();
+};
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  for (const c of [orbitCam, povCam]) if (c) { c.aspect = innerWidth / innerHeight; c.updateProjectionMatrix(); }
+});
+
+// Click a giant cat to hear it. Each cat's rig root (named in Blender) gets its own sound; a click
+// is a press and release without dragging, so orbiting the view never sets one off.
+const CAT_SOUNDS = { Cat: 'white', Cat002: 'black', Cat003: 'orange' };   // white by the river, black mid-board, orange on the tower
+const CAT_VOLUME = { orange: 0.6 };   // per-sound loudness (1 = as recorded); the orange clip is hotter than the others
+const catHits = [];   // { mesh, audio }
+function addCatSounds(root) {
+  for (const [name, sound] of Object.entries(CAT_SOUNDS)) {
+    const cat = root.getObjectByName(name);
+    if (!cat) continue;
+    if (sound === 'white') findGaze(cat, purrEye);   // its gaze starts the purr heard from the cab
+    if (sound === 'black') findGaze(cat, blackEye);   // and this one's gaze sets off its sound
+    const audio = new Audio(`sounds/${sound}.mp3`);
+    audio.preload = 'auto';
+    audio.volume = CAT_VOLUME[sound] ?? 1;
+    cat.traverse((o) => { if (o.isMesh) catHits.push({ mesh: o, audio }); });
+  }
+}
+const catRay = new THREE.Raycaster(), catPointer = new THREE.Vector2();
+let pressAt = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { pressAt = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!pressAt || !catHits.length) return;
+  const moved = Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y), held = performance.now() - pressAt.t;
+  pressAt = null;
+  if (moved > 6 || held > 500) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  catPointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  catRay.setFromCamera(catPointer, fly ? flyCam : usePov && povCam ? lookCam : orbitCam);
+  // nearest thing under the pointer must be a cat: trees or the tower in front of one block the click
+  const hit = catRay.intersectObjects(scene.children, true).find((h) => h.object.visible && h.object.isMesh);
+  const cat = hit && catHits.find((c) => c.mesh === hit.object);
+  if (!cat || !sfxOn) return;
+  cat.audio.currentTime = 0;
+  cat.audio.play().catch(() => {});
+});
+
+// The train's rumble loops softly while it runs: quiet from the orbit view, closer (but still gentle)
+// from the cab, easing between the two over the fly-in; pause stops it with the train. It tries to
+// start on its own as the page opens; browsers that block sound until the visitor interacts get it
+// started inside their first click, tap or key press (Safari only allows it inside that handler).
+const TRAIN_VOLUME = { orbit: 0.04, pov: 0.11 };
+const trainSound = new Audio('sounds/trains.mp3');
+trainSound.loop = true;
+trainSound.preload = 'auto';
+trainSound.volume = TRAIN_VOLUME.orbit;
+let dioramaReady = false;   // set when the loading screen lifts
+let soundUnlocked = true, soundStarting = false;   // assume autoplay works until the browser says no
+const UNLOCK_EVENTS = ['pointerdown', 'keydown', 'touchstart'];
+const unlockSound = () => {
+  soundUnlocked = true;
+  for (const ev of UNLOCK_EVENTS) removeEventListener(ev, unlockSound, true);
+  if (playing && dioramaReady && sfxOn) startTrainSound();
+  if (musicOn && dioramaReady && !nightTarget) dayMusic.play().catch(() => {});
+};
+function startTrainSound() {
+  if (soundStarting) return;
+  soundStarting = true;
+  trainSound.play().then(() => { soundStarting = false; }, (err) => {
+    soundStarting = false;
+    if (err.name !== 'NotAllowedError') return;   // e.g. paused again before it began
+    // blocked: wait for the visitor's first interaction, then start from inside it
+    soundUnlocked = false;
+    for (const ev of UNLOCK_EVENTS) addEventListener(ev, unlockSound, { capture: true, passive: true });
+  });
+}
+function updateTrainSound(dt) {
+  const run = soundUnlocked && playing && dioramaReady && sfxOn;
+  if (run && trainSound.paused) startTrainSound();
+  else if (!run && !trainSound.paused) trainSound.pause();
+  const target = usePov ? TRAIN_VOLUME.pov : TRAIN_VOLUME.orbit;
+  const k = 1 - Math.exp(-dt * 3 / FLY_SECONDS);   // ~95% of the way by the end of the fly
+  trainSound.volume = THREE.MathUtils.clamp(THREE.MathUtils.lerp(trainSound.volume, target, k), 0, 1);
+}
+
+// The campfire crackles only from the cab, and only at night when it's lit, and only as the train
+// passes near it: full volume within BONFIRE_NEAR of the fire, silent beyond BONFIRE_FAR. It also
+// fades in over the fly-in and out on the way back. Part of SFX; stops with the train on pause.
+const BONFIRE_VOLUME = 0.08, BONFIRE_NEAR = 0.35, BONFIRE_FAR = 1.1;   // world units (the board is ~7.5 long)
+const _camAt = new THREE.Vector3(), _fireAt = new THREE.Vector3();
+const bonfireSound = new Audio('sounds/bonfire.mp3');
+bonfireSound.loop = true;
+bonfireSound.preload = 'auto';
+bonfireSound.volume = 0;
+// Safari only lets a sound start outside a click if it was started once inside one: play it
+// silently for a moment from the click so its later, timed start is allowed
+function primeSound(audio) {
+  if (audio.dataset.primed || !audio.paused) return;
+  audio.dataset.primed = '1';
+  audio.muted = true;
+  audio.play().then(() => { audio.pause(); audio.muted = false; }, () => { audio.muted = false; delete audio.dataset.primed; });
+}
+// A sound heard from the cab as the train passes something: `loudness` (0..1) eases in quickly
+// and dies away slowly (a long, smooth tail after leaving), and the clip pauses once it's silent.
+const NEARBY_ATTACK = 0.6, NEARBY_RELEASE = 1.8;   // seconds (time constants of the fade in / out)
+function updateNearbySound(audio, loudness, dt) {
+  const allowed = soundUnlocked && playing && dioramaReady && sfxOn;
+  const target = allowed && usePov ? loudness : 0;
+  const k = 1 - Math.exp(-dt / (target > audio.volume ? NEARBY_ATTACK : NEARBY_RELEASE));
+  audio.volume = THREE.MathUtils.clamp(THREE.MathUtils.lerp(audio.volume, target, k), 0, 1);
+  if (!allowed || (target === 0 && audio.volume < 0.002)) {
+    if (!audio.paused) audio.pause();
+  } else if (audio.paused) audio.play().catch(() => {});
+}
+const nearness = (d, near, far) => 1 - THREE.MathUtils.smoothstep(d, near, far);
+function updateBonfireSound(dt) {
+  let near = 0;
+  if (fireLight && povCam) {
+    near = nearness(povCam.getWorldPosition(_camAt).distanceTo(fireLight.getWorldPosition(_fireAt)), BONFIRE_NEAR, BONFIRE_FAR);
+  }
+  updateNearbySound(bonfireSound, BONFIRE_VOLUME * night * near, dt);
+}
+
+// The white cat purrs while it's looking at you: from the cab, it starts as the cat's head turns
+// to face the train (about 31 s into each lap, by the crossing) and stops once its gaze leaves it,
+// then fades out slowly. "Looking" is the cat's head direction (head bone to the midpoint of its
+// eyes) against the direction to the cab, on the ground plane; on above PURR_LOOK_ON, off below
+// PURR_LOOK_OFF, so it doesn't flicker at the edge. Day or night.
+const PURR_VOLUME = 0.05, PURR_LOOK_ON = 0.6, PURR_LOOK_OFF = 0.45;
+const purrEye = { head: null, left: null, right: null, looking: false };
+const purrSound = new Audio('sounds/purring.mp3');
+purrSound.loop = true;
+purrSound.preload = 'auto';
+purrSound.volume = 0;
+const _headAt = new THREE.Vector3(), _eyeL = new THREE.Vector3(), _eyeR = new THREE.Vector3();
+// a cat's head bone and eye bones (the rigs repeat the names, so later cats get "_1"-style suffixes)
+function findGaze(cat, gaze) {
+  cat.traverse((o) => {
+    if (/^Head(_\d+)?$/.test(o.name)) gaze.head = o;
+    if (/^eyeL(_\d+)?$/.test(o.name)) gaze.left = o;
+    if (/^eyeR(_\d+)?$/.test(o.name)) gaze.right = o;
+  });
+  if (!gaze.left || !gaze.right) gaze.head = null;
+}
+// how squarely a cat faces the cab (1 = straight at it), and how far the cab is, on the ground plane
+function gazeAtCab(gaze) {
+  gaze.head.getWorldPosition(_headAt);
+  const eyes = gaze.left.getWorldPosition(_eyeL).add(gaze.right.getWorldPosition(_eyeR)).multiplyScalar(0.5);
+  const facing = _eyeR.subVectors(eyes, _headAt).setY(0).normalize();
+  const toCab = povCam.getWorldPosition(_camAt).sub(eyes).setY(0);
+  const dist = toCab.length();
+  return { look: facing.dot(toCab.normalize()), dist };
+}
+function updatePurrSound(dt) {
+  if (povCam && purrEye.head) {
+    const { look } = gazeAtCab(purrEye);
+    purrEye.looking = purrEye.looking ? look > PURR_LOOK_OFF : look > PURR_LOOK_ON;
+  }
+  updateNearbySound(purrSound, purrEye.looking ? PURR_VOLUME : 0, dt);
+}
+
+// The black cat makes its sound once per lap, as the train comes toward it while it watches: it
+// has been tracking the train for a while, and fires when the cab gets within BLACK_NEAR while
+// the cat faces it (about 21 s in, a couple of seconds before the train passes under its nose).
+// A one-shot (~4 s); it re-arms once the train is well away again. Heard from the cab only.
+const BLACK_VOLUME = 0.12, BLACK_NEAR = 1.0, BLACK_LOOK = 0.6, BLACK_REARM = 1.6;
+const blackEye = { head: null, left: null, right: null, armed: true };
+const blackSound = new Audio('sounds/activate.mp3');
+blackSound.preload = 'auto';
+function updateBlackCatSound(dt) {
+  const allowed = soundUnlocked && playing && dioramaReady && sfxOn && usePov;
+  if (povCam && blackEye.head) {
+    const { look, dist } = gazeAtCab(blackEye);
+    if (dist > BLACK_REARM) blackEye.armed = true;
+    else if (allowed && blackEye.armed && look > BLACK_LOOK && dist < BLACK_NEAR) {
+      blackEye.armed = false;
+      blackSound.currentTime = 0;
+      blackSound.volume = BLACK_VOLUME;
+      blackSound.play().catch(() => {});
+    }
+  }
+  // leaving the cab (or muting / pausing) mid-sound: fade it out rather than cut it
+  if (!allowed && !blackSound.paused) {
+    blackSound.volume = Math.max(0, blackSound.volume - dt * BLACK_VOLUME / 0.8);
+    if (blackSound.volume < 0.002) blackSound.pause();
+  }
+}
+
+// Level crossings ring as the train comes up to them: from the cab, the bell swells as the train
+// nears the closest crossing signal, rings while it passes, and dies away behind it. Day or night.
+const CROSSING_VOLUME = 0.08, CROSSING_NEAR = 0.15, CROSSING_FAR = 0.6;
+const crossingSound = new Audio('sounds/crossing.mp3');
+crossingSound.loop = true;
+crossingSound.preload = 'auto';
+crossingSound.volume = 0;
+const crossingSignals = [];   // world positions of every crossing signal post
+function findCrossingSignals(root) {
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (/^Crossing_\d+_Signal_[AB]\d*$/.test(o.name)) crossingSignals.push(o.getWorldPosition(new THREE.Vector3()));
+  });
+}
+function updateCrossingSound(dt) {
+  let near = 0;
+  if (povCam && crossingSignals.length) {
+    const p = povCam.getWorldPosition(_camAt);
+    const d = Math.min(...crossingSignals.map((c) => Math.hypot(p.x - c.x, p.z - c.z)));
+    near = nearness(d, CROSSING_NEAR, CROSSING_FAR);
+  }
+  updateNearbySound(crossingSound, CROSSING_VOLUME * near, dt);
+}
+
+// Day music: a song loops softly while it's day, fading out as night falls (and back in at dawn).
+const DAY_MUSIC_VOLUME = 0.5;
+const dayMusic = new Audio('sounds/day.mp3');
+dayMusic.loop = true;
+dayMusic.preload = 'auto';
+dayMusic.volume = 0;
+function updateDayMusic() {
+  const day = 1 - night;
+  const on = musicOn && soundUnlocked && dioramaReady && day > 0.01;
+  if (on && dayMusic.paused) dayMusic.play().catch(() => {});
+  else if (!on && !dayMusic.paused) dayMusic.pause();
+  dayMusic.volume = DAY_MUSIC_VOLUME * day;
+}
+
+// Night music: crickets chirp on a loop, and an owl hoots now and then over them, never on the
+// cue of the crickets starting: its first call waits a few seconds, then it comes back at random
+// gaps. The owl sits well under the crickets. Both fade with the day/night blend; MUSIC mutes them.
+const NIGHT_MUSIC = { cricket: 0.25, owl: 0.08 };
+const OWL_FIRST = 6, OWL_GAP = [12, 22];   // seconds: first hoot after night falls, then between hoots
+const crickets = new Audio('sounds/cricket.mp3');
+crickets.loop = true;
+crickets.preload = 'auto';
+crickets.volume = 0;
+const owl = new Audio('sounds/owl.mp3');
+owl.preload = 'auto';
+let owlWait = OWL_FIRST, owlPrimed = false;
+function startNightMusic() {
+  if (!musicOn || !dioramaReady) return;
+  crickets.play().catch(() => {});
+  // Safari only lets a sound play later if it was started once inside a click: start the owl
+  // silently here and stop it, so its timed hoots are allowed
+  if (!owlPrimed) {
+    owlPrimed = true;
+    owl.muted = true;
+    owl.play().then(() => { owl.pause(); owl.currentTime = 0; owl.muted = false; }, () => { owl.muted = false; owlPrimed = false; });
+  }
+}
+function updateNightMusic(dt) {
+  const on = musicOn && soundUnlocked && dioramaReady && night > 0.01;
+  if (on && crickets.paused) crickets.play().catch(() => {});
+  else if (!on && !crickets.paused) crickets.pause();
+  crickets.volume = NIGHT_MUSIC.cricket * night;
+  owl.volume = NIGHT_MUSIC.owl * night;
+  if (!on) {
+    owlWait = OWL_FIRST;   // next nightfall starts the wait again
+    if (!owl.paused) owl.pause();
+    return;
+  }
+  owlWait -= dt;
+  if (owlWait <= 0) {
+    owlWait = THREE.MathUtils.randFloat(OWL_GAP[0], OWL_GAP[1]);
+    owl.currentTime = 0;
+    owl.play().catch(() => {});
+  }
+}
+
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  if (mixer && playing) mixer.update(dt);
+  if (playing) riverWaveFrame.value += dt * 30 * RIVER_SPEED;   // Blender frames at the scene's 30 fps
+  if (mixer) updateFire(mixer.time * 30);
+  updateBeacon(clock.elapsedTime);
+  updateCrossing(clock.elapsedTime);
+  updateMode(dt);
+  updateClouds(dt, night);
+  updateFireflies(dt);
+  updateTrainSound(dt);
+  updateBonfireSound(dt);
+  updatePurrSound(dt);
+  updateBlackCatSound(dt);
+  updateCrossingSound(dt);
+  updateNightMusic(dt);
+  updateDayMusic();
+  drawStars(clock.elapsedTime);
+  spinHold = Math.max(0, spinHold - dt);
+  controls.autoRotate = entered && playing && spinHold === 0;
+  if (controls.enabled) controls.update(dt);
+  updateFly();
+  if (usePov && povCam) updateLookCam(dt);
+  renderer.render(scene, fly ? flyCam : usePov && povCam ? lookCam : orbitCam);
+});
+</script>
+</body>
+</html>
