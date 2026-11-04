@@ -303,10 +303,10 @@ const ICON_BG_DAY = new THREE.Color(0xffffff), ICON_BG_NIGHT = new THREE.Color(0
 // Night starfield: a seeded scatter laid out to the window size (rebuilt on resize so it stays
 // crisp), denser toward the top; a few brighter stars get a soft halo. Each star twinkles on its
 // own speed and phase; the canvas is only redrawn while the night sky is showing.
-const STAR_COUNT = 300, STAR_FPS = PHONE ? 20 : 30;
+const STAR_COUNT = 300, STAR_FPS = 30;
 const starfield = { stars: [], ctx: null, last: -1 };
 function layoutStars() {
-  const c = document.getElementById('stars'), dpr = Math.min(devicePixelRatio, PHONE ? 1.5 : 2);
+  const c = document.getElementById('stars'), dpr = Math.min(devicePixelRatio, 2);
   c.width = innerWidth * dpr; c.height = innerHeight * dpr;
   starfield.ctx = c.getContext('2d');
   starfield.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -363,13 +363,6 @@ function applyMode(k) {
   // lights stay in the scene at intensity 0 by day, so switching never triggers a shader recompile
   for (const l of lamps.lights) l.intensity = l.userData.onIntensity * LAMP_NIGHT_BOOST * k;
   for (const m of lamps.glass) m.emissiveIntensity = m.userData.onIntensity * k;
-  if (lampPools.mat) {
-    lampPools.mat.color.copy(lampPools.tint).multiplyScalar(LAMP_POOL.glow * k);
-    lampPools.mat.visible = k > 0.001;
-    hemi.intensity += LAMP_POOL.fill * k;
-    hemi.color.lerp(lampPools.color, LAMP_POOL.warm * k);
-    hemi.groundColor.lerp(lampPools.color, LAMP_POOL.warm * k);
-  }
   for (const m of windows) m.emissiveIntensity = WINDOW_GLOW * k;
   for (const f of flames) f.visible = k > 0.35;
   updateStationLights(k);
@@ -379,58 +372,6 @@ function applyMode(k) {
   if (train.lampMat) train.lampMat.emissiveIntensity = THREE.MathUtils.lerp(HEADLAMP.glow[0], HEADLAMP.glow[1], k);
   if (train.beam) train.beam.intensity = THREE.MathUtils.lerp(HEADLAMP.beam[0], HEADLAMP.beam[1], k);
   riverBright.value = THREE.MathUtils.lerp(1, RIVER_NIGHT, k);
-}
-
-// Phones at night: every light costs something on every pixel of the board, and the 13 street lamps'
-// lights (on top of a dozen other night lights) were what made night mode lag there. On phones each
-// lamp instead brightens the ground under it with a flat disc that multiplies what's already drawn
-// there (so lit grass stays green, as with a real light), by up to 1 + `glow` right under the lamp.
-// Where neighbouring pools overlap their brightening compounds, so `glow` is kept modest, and the
-// lamp colour is mixed toward white (`tint`) so the multiplying doesn't turn everything yellow.
-// The lamps' lights also reached right across the board (no range limit), washing it in warm light:
-// the scene's soft sky fill takes that over, warmer and brighter at night (`fill`, `warm`).
-const LAMP_POOL = { radius: 0.45, height: 0.2, glow: 1, tint: 0.5, fill: 0.3, warm: 0.25 };
-const lampPools = { mat: null, color: new THREE.Color(), tint: null };
-function addLampPools(root) {
-  if (!lamps.lights.length) return;
-  lampPools.color.copy(lamps.lights[0].color);
-  lampPools.tint = lampPools.color.clone().lerp(new THREE.Color(1, 1, 1), 1 - LAMP_POOL.tint);
-  const N = 128, c = document.createElement('canvas'); c.width = c.height = N;
-  const g = c.getContext('2d'), img = g.createImageData(N, N);
-  // a lamp `height` above flat ground lights it as (1 + (r/h)^2)^-1.5, eased to nothing at the rim
-  const h = LAMP_POOL.height / LAMP_POOL.radius;
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-    const d = Math.min(1, Math.hypot(x + 0.5 - N / 2, y + 0.5 - N / 2) / (N / 2));
-    const v = 255 * (1 + (d / h) ** 2) ** -1.5 * (1 - d * d) ** 2, i = (y * N + x) * 4;
-    img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  lampPools.mat = new THREE.MeshBasicMaterial({
-    map: new THREE.CanvasTexture(c), color: 0x000000, transparent: true, depthWrite: false, toneMapped: false,
-    // result = ground * (1 + pool): brightens what's there; the canvas's alpha is left alone
-    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
-    blendSrc: THREE.DstColorFactor, blendDst: THREE.OneFactor,
-    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
-    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
-  const geo = new THREE.CircleGeometry(LAMP_POOL.radius, 32).rotateX(-Math.PI / 2);
-  const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
-  root.updateMatrixWorld(true);
-  for (const l of lamps.lights) {
-    const post = l.parent;
-    ray.set(l.getWorldPosition(new THREE.Vector3()), down);
-    // the first thing under the light that isn't part of its own lamp post
-    const hit = ray.intersectObject(root, true).find((h) => {
-      for (let o = h.object; o; o = o.parent) if (o === post) return false;
-      return h.object.visible;
-    });
-    if (!hit) continue;
-    const pool = new THREE.Mesh(geo, lampPools.mat);
-    pool.position.copy(hit.point).y += 0.015;   // the ballast sits a touch below the ground beside it
-    pool.castShadow = pool.receiveShadow = false;
-    pool.renderOrder = 1;
-    scene.add(pool);
-  }
-  for (const l of lamps.lights) l.removeFromParent();
 }
 
 // Fluorescent tubes hung under both station canopies. Each platform has two rows of pink pillars
@@ -537,10 +478,9 @@ function addStationLights(stationGroup) {
       }
     }
     // a few cool-white lights along each platform rather than one per tube, to keep the light count low
-    // (phones: just the middle one, reaching further, for the same reason as the lamp pools)
-    const xs = pl.tubeXs, mid = xs[Math.floor(xs.length / 2)];
-    for (const x of PHONE ? [mid] : [xs[0], mid, xs[xs.length - 1]]) {
-      const l = new THREE.PointLight(0xdcecff, 0, PHONE ? 0.36 : 0.22, 2);
+    const xs = pl.tubeXs;
+    for (const x of [xs[0], xs[Math.floor(xs.length / 2)], xs[xs.length - 1]]) {
+      const l = new THREE.PointLight(0xdcecff, 0, 0.22, 2);
       l.position.set(x, pl.tubeY - 0.02, z);
       scene.add(l); station.lights.push(l);
     }
@@ -552,7 +492,7 @@ function updateStationLights(k) {
   const warming = nightTarget === 1 && k < 1;
   const flick = warming ? (Math.random() < 0.35 ? 0.15 : 1) : 1;
   station.tubeMat.emissiveIntensity = TUBE_GLOW * k * flick;
-  for (const l of station.lights) l.intensity = TUBE_LIGHT * (PHONE ? 2 : 1) * k * flick;
+  for (const l of station.lights) l.intensity = TUBE_LIGHT * k * flick;
 }
 
 // Low-poly day clouds: clusters of flat-shaded, squashed icosahedrons scattered over the board itself,
@@ -1240,7 +1180,6 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
   addFireflies(root);
   addBoardShadow(root);
   addCatSounds(root);
-  if (PHONE) addLampPools(root);
   applyMode(night);
 
   const river = root.getObjectByName('River_Water');
@@ -1880,6 +1819,23 @@ function updateNightMusic(dt) {
   }
 }
 
+// Phones: when frames come too slowly (at night two dozen lights fall on every pixel), draw at a
+// slightly lower resolution instead of touching the lighting, and climb back once there's room.
+// Checked once a second; a step down after one slow second, a step up after three quick ones.
+const RES = { max: Math.min(devicePixelRatio, 1.25), min: Math.min(devicePixelRatio, 1), step: 0.1,
+              slowMs: 22, quickMs: 18, sum: 0, n: 0, since: 0, quick: 0 };
+function adaptResolution(time, interval) {
+  if (!PHONE || interval > 500) return;   // ignore gaps (hidden tab, paused page)
+  RES.sum += interval; RES.n++;
+  if (time - RES.since < 1000) return;
+  const avg = RES.sum / RES.n, pr = renderer.getPixelRatio();
+  RES.sum = RES.n = 0; RES.since = time;
+  let next = pr;
+  if (avg > RES.slowMs) { next = Math.max(RES.min, pr - RES.step); RES.quick = 0; }
+  else if (avg < RES.quickMs && ++RES.quick >= 3) { next = Math.min(RES.max, pr + RES.step / 2); RES.quick = 0; }
+  if (Math.abs(next - pr) > 0.001) renderer.setPixelRatio(next);
+}
+
 const clock = new THREE.Clock();
 let frameCount = 0, lastFrame = -Infinity;
 renderer.setAnimationLoop((time) => {
@@ -1887,6 +1843,7 @@ renderer.setAnimationLoop((time) => {
   // the heat and battery and little visible gain: skip every other frame there (90 Hz and 60 Hz
   // screens are left alone)
   if (PHONE && time - lastFrame < 10) return;
+  adaptResolution(time, time - lastFrame);
   lastFrame = time;
   const dt = clock.getDelta();
   if (mixer && playing) mixer.update(dt);
