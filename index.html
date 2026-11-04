@@ -1082,6 +1082,30 @@ function updateBeacon(t) {
 let home = { pos: new THREE.Vector3(), target: new THREE.Vector3() };
 const loadingEl = document.getElementById('loading');
 
+// Phones: the board's textures go up to 4096 px. Decoded with mipmaps, the two 4096s and ten 2048s
+// take ~475 MB of graphics memory, far more than a phone has to spare, and a phone screen never
+// shows that detail anyway. Cap them at 1024 px (~120 MB in all) before they're uploaded.
+const PHONE_TEX_MAX = 1024;
+function shrinkTextures(root) {
+  const done = new Set();
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    for (const m of [o.material].flat()) for (const t of Object.values(m)) {
+      if (!t?.isTexture || t.isVideoTexture || t.isCanvasTexture || done.has(t.source)) continue;
+      done.add(t.source);   // textures that share an image share its source: shrink it once
+      const img = t.image, w = img?.width, h = img?.height;
+      if (!w || !h || Math.max(w, h) <= PHONE_TEX_MAX) continue;
+      const k = PHONE_TEX_MAX / Math.max(w, h);
+      const c = document.createElement('canvas');
+      c.width = Math.round(w * k); c.height = Math.round(h * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      img.close?.();   // free the full-size decoded bitmap
+      t.image = c;
+      t.needsUpdate = true;
+    }
+  });
+}
+
 // diorama.glb is meshopt-compressed (geometry, shape keys and animation) with WebP textures:
 // ~10 MB instead of ~33 MB. The uncompressed export is kept in source/ (not published).
 new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) => {
@@ -1094,6 +1118,8 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
     const o = root.getObjectByName(name);
     if (o) { o.position.x += dx; o.position.z += dz; o.updateMatrixWorld(true); }
   }
+
+  if (PHONE) shrinkTextures(root);
 
   const tower = root.getObjectByName('RadioTower_mesh');
   if (tower) addBeacon(tower);
@@ -1794,8 +1820,13 @@ function updateNightMusic(dt) {
 }
 
 const clock = new THREE.Clock();
-let frameCount = 0;
-renderer.setAnimationLoop(() => {
+let frameCount = 0, lastFrame = -Infinity;
+renderer.setAnimationLoop((time) => {
+  // phones with 120 Hz screens would draw the whole board twice as often as at 60 Hz, for twice
+  // the heat and battery and little visible gain: skip every other frame there (90 Hz and 60 Hz
+  // screens are left alone)
+  if (PHONE && time - lastFrame < 10) return;
+  lastFrame = time;
   const dt = clock.getDelta();
   if (mixer && playing) mixer.update(dt);
   if (playing) riverWaveFrame.value += dt * 30 * RIVER_SPEED;   // Blender frames at the scene's 30 fps
