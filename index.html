@@ -362,6 +362,7 @@ function applyMode(k) {
   document.documentElement.style.setProperty('--icon-bg', '#' + ICON_BG_DAY.clone().lerp(ICON_BG_NIGHT, k).getHexString());
   // lights stay in the scene at intensity 0 by day, so switching never triggers a shader recompile
   for (const l of lamps.lights) l.intensity = l.userData.onIntensity * LAMP_NIGHT_BOOST * k;
+  lampBake.k.value = k;
   for (const m of lamps.glass) m.emissiveIntensity = m.userData.onIntensity * k;
   for (const m of windows) m.emissiveIntensity = WINDOW_GLOW * k;
   for (const f of flames) f.visible = k > 0.35;
@@ -391,6 +392,147 @@ function setNightLights(on) {
   if (nightLights.on === on) return;
   nightLights.on = on;
   for (const l of nightLights.list) l.visible = on;
+}
+
+// Phones at night: baked lamp light. The 13 street lamps never move, cast no shadows and reach
+// everywhere, yet as real lights every pixel of the board paid the full price of all 13 every frame.
+// On phones each lamp's light is split in two by distance:
+// - within LAMP_NEAR of a lamp, where it's bright and changes fast, every pixel works it out exactly
+//   as three.js does for a real light (same code, shine included), but only for lamps that close;
+// - further out, where it's faint and smooth, it's worked out once at load (three.js's formula:
+//   colour x intensity x facing / distance squared) at every corner of every still mesh, stored on
+//   the mesh, and simply added in the shader.
+// The two halves fade into each other, so together they make the lamp's whole light. Things that
+// move or bend (tram, cats, clouds) can't keep stored light: they work out every lamp exactly, live.
+// So do the partly metallic materials (wagons, containers, some buildings), whose shine from even
+// distant lamps shows. The real lamps are then removed. Left out: the far half's faint shine on
+// the non-metallic rest (grass, trees, ground), too faint to see.
+const LAMP_NEAR = 1.0, LAMP_METAL = 0.2;
+const lampBake = { k: { value: 0 }, world: [], view: { value: [] }, colour: { value: [] }, live: false };
+const lampNearWeight = (d) => { const x = Math.min(1, (d / LAMP_NEAR) ** 4); return (1 - x) ** 2; };
+function bakeLampLight(root, animations) {
+  if (!lamps.lights.length) return;
+  root.updateMatrixWorld(true);
+  const P = lamps.lights.map((l) => l.getWorldPosition(new THREE.Vector3()));
+  const C = lamps.lights.map((l) => l.color.clone().multiplyScalar(l.userData.onIntensity * LAMP_NIGHT_BOOST));
+  lampBake.world = P;
+  lampBake.view.value = P.map((p) => p.clone());
+  lampBake.colour.value = C.map((c) => new THREE.Vector3(c.r, c.g, c.b));
+  const animated = new Set();
+  for (const clip of animations) for (const t of clip.tracks) animated.add(THREE.PropertyBinding.parseTrackName(t.name).nodeName);
+  const lit = (m) => m && (m.isMeshStandardMaterial || m.isMeshLambertMaterial || m.isMeshPhongMaterial);
+  const geoUsers = new Map();
+  scene.traverse((o) => o.isMesh && geoUsers.set(o.geometry, (geoUsers.get(o.geometry) || 0) + 1));
+  const baked = [], live = [];
+  scene.traverse((o) => {
+    if (!o.isMesh || ![o.material].flat().some(lit)) return;
+    let still = !Array.isArray(o.material) && !o.isSkinnedMesh && !Object.keys(o.geometry.morphAttributes).length &&
+      !!o.geometry.attributes.normal, inRoot = false;
+    for (let p = o; p; p = p.parent) {
+      if (p === root) inRoot = true;
+      if (animated.has(p.name) || !p.visible) still = false;
+    }
+    (still && inRoot && !(o.material.metalness >= LAMP_METAL) ? baked : live).push(o);
+  });
+  const bakedMats = new Set();
+  for (const o of baked) {
+    if (geoUsers.get(o.geometry) > 1) o.geometry = o.geometry.clone();   // each copy is lit differently
+    bakeMesh(o, P, C, o.material.side === THREE.DoubleSide);
+    bakedMats.add(o.material);
+    lampHook(o.material, 'baked');
+  }
+  const clones = new Map();
+  for (const o of live) {
+    o.material = [o.material].flat().map((m) => {
+      if (!lit(m)) return m;
+      if (!bakedMats.has(m)) return lampHook(m, 'live');
+      if (!clones.has(m)) {   // shared with baked meshes, which read stored light: a live copy for this one
+        const c = m.clone();
+        delete c.userData.lampMode;
+        c.onBeforeCompile = m.userData.lampPrevHook;
+        c.customProgramCacheKey = () => m.userData.lampPrevKey;
+        clones.set(m, lampHook(c, 'live'));
+      }
+      return clones.get(m);
+    });
+    if (o.material.length === 1) o.material = o.material[0];
+  }
+  lampBake.live = true;
+  for (const l of lamps.lights) l.removeFromParent();
+}
+function bakeMesh(o, P, C, twoSided) {
+  const g = o.geometry, pos = g.attributes.position, nor = g.attributes.normal, n = pos.count;
+  const front = new Float32Array(n * 3), back = twoSided ? new Float32Array(n * 3) : null;
+  const nm = new THREE.Matrix3().getNormalMatrix(o.matrixWorld);
+  // the river's shader gives it its own upward normal
+  const up = /^River_Water/.test(o.name) ? new THREE.Vector3(0, 1, 0) : null;
+  const p = new THREE.Vector3(), N = new THREE.Vector3(), L = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    p.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+    if (up) N.copy(up); else N.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize();
+    for (let j = 0; j < P.length; j++) {
+      L.subVectors(P[j], p);
+      const d2 = L.lengthSq(), facing = N.dot(L) / Math.sqrt(d2);
+      const fall = (1 - lampNearWeight(Math.sqrt(d2))) / Math.max(d2, 0.01);   // the far half only
+      const out = facing > 0 ? front : back, s = Math.abs(facing) * fall;
+      if (!out) continue;
+      out[i * 3] += C[j].r * s; out[i * 3 + 1] += C[j].g * s; out[i * 3 + 2] += C[j].b * s;
+    }
+  }
+  g.setAttribute('lampLight', new THREE.BufferAttribute(front, 3));
+  if (back) g.setAttribute('lampLightBack', new THREE.BufferAttribute(back, 3));
+}
+// adds the lamp light to a material's shader, next to its real lights
+function lampHook(m, mode) {
+  if (m.userData.lampMode) return m;
+  const prevHook = m.onBeforeCompile, prevKey = m.customProgramCacheKey();
+  const twoSided = m.side === THREE.DoubleSide && mode === 'baked';
+  Object.assign(m.userData, { lampMode: mode, lampPrevHook: prevHook, lampPrevKey: prevKey });
+  m.onBeforeCompile = (shader, r) => {
+    prevHook.call(m, shader, r);
+    shader.uniforms.uLampK = lampBake.k;
+    shader.uniforms.uLampPos = lampBake.view;
+    shader.uniforms.uLampCol = lampBake.colour;
+    const N = lampBake.world.length, near = mode === 'baked';
+    let decl = `uniform float uLampK; uniform vec3 uLampPos[${N}]; uniform vec3 uLampCol[${N}];`, far = '';
+    if (near) {
+      const vary = `varying vec3 vLampLight;${twoSided ? ' varying vec3 vLampLightBack;' : ''}`;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\nattribute vec3 lampLight; ${twoSided ? 'attribute vec3 lampLightBack; ' : ''}${vary}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\nvLampLight = lampLight;${twoSided ? ' vLampLightBack = lampLightBack;' : ''}`);
+      decl += vary;
+      far = `reflectedLight.directDiffuse += (${twoSided ? 'gl_FrontFacing ? vLampLight : vLampLightBack' : 'vLampLight'}) * uLampK * BRDF_Lambert(material.diffuseColor);`;
+    }
+    // each lamp exactly as three.js lights a real one (RE_Direct), weighted to its near half when baked
+    const R = LAMP_NEAR.toFixed(3);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${decl}`)
+      .replace('#include <lights_fragment_end>', `
+        if (uLampK > 0.0) {
+          ${far}
+          for (int i = 0; i < ${N}; i++) {
+            vec3 l = uLampPos[i] - geometryPosition;
+            float d = length(l);
+            ${near ? `if (d >= ${R}) continue;
+            float w = 1.0 - pow(d / ${R}, 4.0); w *= w;` : 'float w = 1.0;'}
+            IncidentLight lamp;
+            lamp.direction = l / d;
+            lamp.color = uLampCol[i] * (uLampK * w / max(d * d, 0.01));
+            lamp.visible = true;
+            RE_Direct(lamp, geometryPosition, geometryNormal, geometryViewDir, geometryClearcoatNormal, material, reflectedLight);
+          }
+        }
+        #include <lights_fragment_end>`);
+  };
+  m.customProgramCacheKey = () => `${prevKey}|lamp-${mode}${twoSided ? '-2' : ''}`;
+  m.needsUpdate = true;
+  return m;
+}
+// live lamp light works in view space: move the lamps into the camera's view each frame
+function updateLampView(cam) {
+  if (!lampBake.live || lampBake.k.value <= 0) return;
+  cam.updateMatrixWorld();
+  lampBake.view.value.forEach((v, i) => v.copy(lampBake.world[i]).applyMatrix4(cam.matrixWorldInverse));
 }
 
 // pink pillars (thin vertical pieces rising from the platform decks), grouped per platform
@@ -1320,6 +1462,7 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', async (gl
   const simplifier = await treeSimplifier;
   if (simplifier) { simplifyTrees(root, simplifier); simplifyDetail(root, simplifier); }
   mergeStatic(root, gltf.animations);
+  if (PHONE) bakeLampLight(root, gltf.animations);
 
   addSun(new THREE.Box3().setFromObject(root));
 
@@ -1397,7 +1540,7 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', async (gl
     for (const m of [o.material].flat()) if (m) for (const v of Object.values(m)) if (v?.isTexture && !v.isVideoTexture) renderer.initTexture(v);
   });
   const compileAll = () => (renderer.compileAsync ? renderer.compileAsync(scene, orbitCam) : Promise.resolve(renderer.compile(scene, orbitCam)));
-  if (PHONE) nightLights.list = [...lamps.lights, ...station.lights, fireLight, train.light].filter(Boolean);
+  if (PHONE) nightLights.list = [...lamps.lights, ...station.lights, fireLight, train.light].filter((l) => l?.parent);
   compileAll()
     .then(() => { if (PHONE) { for (const l of nightLights.list) l.visible = false; return compileAll(); } })
     .catch(() => {}).finally(() => {
@@ -1989,7 +2132,9 @@ renderer.setAnimationLoop((time) => {
   if (controls.enabled) controls.update(dt);
   updateFly();
   if (usePov && povCam) updateLookCam(dt);
-  renderer.render(scene, fly ? flyCam : usePov && povCam ? lookCam : orbitCam);
+  const cam = fly ? flyCam : usePov && povCam ? lookCam : orbitCam;
+  updateLampView(cam);
+  renderer.render(scene, cam);
 });
 </script>
 </body>
