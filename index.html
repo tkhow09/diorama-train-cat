@@ -182,7 +182,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
 // Phones get a lighter setup: their graphics chips choke on the full desktop one (25 point lights
@@ -686,6 +686,37 @@ function simplifyTree(geo, simplifier) {
   const result = out.toNonIndexed();
   result.computeVertexNormals();   // non-indexed: one normal per face, as before
   return result;
+}
+
+// Phones: other detailed meshes get the same treatment as the trees, on a tighter leash: each is
+// simplified only as far as it can go without any surface moving more than DETAIL_MAX_ERROR (in
+// board units; the board is ~7 long and the overhead wires ~0.004 thick). Texture seams and shading
+// are kept: only triangles are removed, the corners that remain keep their colour, UVs and normals.
+// The two overhead wires alone were ~47k triangles. Meshes that bend (cats) are left alone, and so
+// is the river, whose ripples move its corners in the shader and need every one of them.
+const DETAIL_MIN_TRIS = 1000, DETAIL_MAX_ERROR = 0.0005;
+function simplifyDetail(root, simplifier) {
+  root.updateMatrixWorld(true);
+  const done = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh || o.isSkinnedMesh || Array.isArray(o.material) || /^River_Water/.test(o.name)) return;
+    const g = o.geometry;
+    if (Object.keys(g.morphAttributes).length || g.groups.length > 1) return;
+    if ((g.index ? g.index.count : g.attributes.position.count) / 3 < DETAIL_MIN_TRIS) return;
+    const scale = o.matrixWorld.getMaxScaleOnAxis(), key = `${g.uuid}|${scale.toFixed(5)}`;
+    if (!done.has(key)) done.set(key, simplifyDetailGeometry(g, scale, simplifier));
+    o.geometry = done.get(key);
+  });
+}
+function simplifyDetailGeometry(geo, worldScale, simplifier) {
+  let g = toFloat(geo.clone());
+  if (!g.index) g = mergeVertices(g);   // join identical corners so there's something to simplify
+  const pos = g.attributes.position.array;
+  const error = DETAIL_MAX_ERROR / (simplifier.getScale(pos, 3) * worldScale);   // relative to the mesh's size
+  const [kept] = simplifier.simplify(new Uint32Array(g.index.array), pos, 3, 0, error, []);
+  if (kept.length > g.index.count * 0.9) return geo;   // barely simpler: keep the original
+  g.setIndex(new THREE.BufferAttribute(kept, 1));
+  return g;
 }
 
 function mergeStatic(root, animations) {
@@ -1287,7 +1318,7 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', async (gl
   const river = root.getObjectByName('River_Water');
   if (river) river.material = makeWater();
   const simplifier = await treeSimplifier;
-  if (simplifier) simplifyTrees(root, simplifier);
+  if (simplifier) { simplifyTrees(root, simplifier); simplifyDetail(root, simplifier); }
   mergeStatic(root, gltf.animations);
 
   addSun(new THREE.Box3().setFromObject(root));
