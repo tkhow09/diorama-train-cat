@@ -1841,8 +1841,75 @@ function makeSound(src) {
   if (audioCtx) routeThroughGain(a);
   return a;
 }
+// The sounds heard from the cab as the train passes something (crossing bell, bonfire, purr, the
+// black cat) fade in and out all the time. On iPhones, an <audio> element's volume only works
+// through the gain node above, and that link isn't dependable: after pauses, restarts or an audio
+// interruption the sound can come out straight at full volume, so a fade-out does nothing (the
+// crossing bell kept ringing after the train had left). These short clips are instead decoded once
+// and played directly through Web Audio, where volume always applies. They need no priming: once
+// the audio is unlocked by a tap, Web Audio may start them at any time. The long music and the
+// train's rumble stay <audio> elements (decoded, they would take a lot of memory).
+let sfxCtx = null;
+class ClipSound {
+  constructor(src) {
+    this.isClip = true; this.loop = false; this.preload = 'auto'; this.dataset = {}; this.paused = true;
+    this._vol = 1; this._muted = false; this._node = null; this._gain = null; this._buf = null;
+    this._offset = 0; this._startedAt = 0;
+    this._data = fetch(src).then((r) => r.arrayBuffer());
+  }
+  get volume() { return this._vol; }
+  set volume(v) { this._vol = v; this._applyGain(); }
+  get muted() { return this._muted; }
+  set muted(m) { this._muted = m; this._applyGain(); }
+  _applyGain() { if (this._gain) this._gain.gain.value = this._muted ? 0 : this._vol; }
+  set currentTime(t) {   // only ever set to 0: start over
+    this._offset = t;
+    if (!this.paused && this._node) { this._stopNode(); this._offset = t; this._startNode(); }
+  }
+  play() {
+    if (!this.paused) return Promise.resolve();
+    if (!sfxCtx || sfxCtx.state === 'closed') return Promise.reject(Object.assign(new Error('audio locked'), { name: 'NotAllowedError' }));
+    this.paused = false;
+    this._bufP ??= this._data.then((d) => sfxCtx.decodeAudioData(d.slice(0)));
+    return this._bufP.then((buf) => { this._buf = buf; if (!this.paused && !this._node) this._startNode(); },
+      (err) => { this.paused = true; this._bufP = null; throw err; });
+  }
+  pause() {
+    if (this.paused) return;
+    this.paused = true;
+    this._stopNode();
+  }
+  _startNode() {
+    if (!this._gain) { this._gain = sfxCtx.createGain(); this._gain.connect(sfxCtx.destination); }
+    this._applyGain();
+    const n = sfxCtx.createBufferSource();
+    n.buffer = this._buf;
+    n.loop = this.loop;
+    n.connect(this._gain);
+    n.onended = () => { if (this._node === n) { this._node = null; this.paused = true; this._offset = 0; } };
+    const at = this.loop ? this._offset % this._buf.duration : Math.min(this._offset, this._buf.duration);
+    this._startedAt = sfxCtx.currentTime - at;
+    n.start(0, at);
+    this._node = n;
+  }
+  _stopNode() {
+    if (!this._node) return;
+    const n = this._node;
+    this._node = null;
+    n.onended = null;
+    this._offset = sfxCtx.currentTime - this._startedAt;   // a loop picks up where it left off
+    n.stop();
+  }
+}
+const makeClipSound = (src) => new ClipSound(src);
+function unlockClipSounds() {
+  if (!sfxCtx) sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (sfxCtx.state !== 'running') sfxCtx.resume().catch(() => {});
+}
+
 // call from inside a tap / click / key press
 function unlockAllSounds(prime = true) {
+  unlockClipSounds();
   if (VOLUME_LOCKED && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx) { for (const a of allSounds) routeThroughGain(a); audioCtx.resume(); }
   if (prime) for (const a of allSounds) if (a.paused && !a.dataset.primed && !a.dataset.tapOnly) primeSound(a);
@@ -1858,11 +1925,16 @@ function playSound(a) {
 function repairSound() {
   if (!soundUnlocked) return;   // the first tap is handled by unlockSound
   if (audioCtx && audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+  unlockClipSounds();
   // (tap-only sounds, the cats', start inside the tap itself: priming them would mute that start)
   for (const a of allSounds) if (a.paused && !a.dataset.primed && !a.dataset.tapOnly) primeSound(a);
 }
 for (const ev of ['pointerup', 'touchend', 'click', 'keydown']) addEventListener(ev, repairSound, { capture: true, passive: true });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && audioCtx) audioCtx.resume().catch(() => {}); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (audioCtx) audioCtx.resume().catch(() => {});
+  if (sfxCtx) sfxCtx.resume().catch(() => {});
+});
 
 // Click a giant cat to hear it. Each cat's rig root (named in Blender) gets its own sound; a click
 // is a press and release without dragging, so orbiting the view never sets one off.
@@ -1948,14 +2020,14 @@ function updateTrainSound(dt) {
 // fades in over the fly-in and out on the way back. Part of SFX; stops with the train on pause.
 const BONFIRE_VOLUME = 0.08, BONFIRE_NEAR = 0.35, BONFIRE_FAR = 1.1;   // world units (the board is ~7.5 long)
 const _camAt = new THREE.Vector3(), _fireAt = new THREE.Vector3();
-const bonfireSound = makeSound('sounds/bonfire.mp3');
+const bonfireSound = makeClipSound('sounds/bonfire.mp3');
 bonfireSound.loop = true;
 bonfireSound.preload = 'auto';
 bonfireSound.volume = 0;
 // Safari only lets a sound start outside a click if it was started once inside one: play it
 // silently for a moment from the click so its later, timed start is allowed
 function primeSound(audio) {
-  if (audio.dataset.primed || !audio.paused) return;
+  if (audio.isClip || audio.dataset.primed || !audio.paused) return;   // clips need no priming
   audio.dataset.primed = '1';
   audio.muted = true;
   audio.play().then(() => { audio.pause(); audio.muted = false; }, () => { audio.muted = false; delete audio.dataset.primed; });
@@ -1988,7 +2060,7 @@ function updateBonfireSound(dt) {
 // PURR_LOOK_OFF, so it doesn't flicker at the edge. Day or night.
 const PURR_VOLUME = 0.05, PURR_LOOK_ON = 0.6, PURR_LOOK_OFF = 0.45;
 const purrEye = { head: null, left: null, right: null, looking: false };
-const purrSound = makeSound('sounds/purring.mp3');
+const purrSound = makeClipSound('sounds/purring.mp3');
 purrSound.loop = true;
 purrSound.preload = 'auto';
 purrSound.volume = 0;
@@ -2025,7 +2097,7 @@ function updatePurrSound(dt) {
 // A one-shot (~4 s); it re-arms once the train is well away again. Heard from the cab only.
 const BLACK_VOLUME = 0.12, BLACK_NEAR = 1.0, BLACK_LOOK = 0.6, BLACK_REARM = 1.6;
 const blackEye = { head: null, left: null, right: null, armed: true };
-const blackSound = makeSound('sounds/activate.mp3');
+const blackSound = makeClipSound('sounds/activate.mp3');
 blackSound.preload = 'auto';
 function updateBlackCatSound(dt) {
   const allowed = soundUnlocked && playing && dioramaReady && sfxOn && usePov;
@@ -2049,7 +2121,7 @@ function updateBlackCatSound(dt) {
 // Level crossings ring as the train comes up to them: from the cab, the bell swells as the train
 // nears the closest crossing signal, rings while it passes, and dies away behind it. Day or night.
 const CROSSING_VOLUME = 0.08, CROSSING_NEAR = 0.15, CROSSING_FAR = 0.6;
-const crossingSound = makeSound('sounds/crossing.mp3');
+const crossingSound = makeClipSound('sounds/crossing.mp3');
 crossingSound.loop = true;
 crossingSound.preload = 'auto';
 crossingSound.volume = 0;
