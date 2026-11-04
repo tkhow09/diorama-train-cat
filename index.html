@@ -1819,6 +1819,23 @@ function updateNightMusic(dt) {
   }
 }
 
+// Phones: when frames come too slowly (at night two dozen lights fall on every pixel), draw at a
+// slightly lower resolution instead of touching the lighting, and climb back once there's room.
+// Checked once a second; a step down after one slow second, a step up after three quick ones.
+const RES = { max: Math.min(devicePixelRatio, 1.25), min: Math.min(devicePixelRatio, 1), step: 0.1,
+              slowMs: 22, quickMs: 18, sum: 0, n: 0, since: 0, quick: 0 };
+function adaptResolution(time, interval) {
+  if (!PHONE || interval > 500) return;   // ignore gaps (hidden tab, paused page)
+  RES.sum += interval; RES.n++;
+  if (time - RES.since < 1000) return;
+  const avg = RES.sum / RES.n, pr = renderer.getPixelRatio();
+  RES.sum = RES.n = 0; RES.since = time;
+  let next = pr;
+  if (avg > RES.slowMs) { next = Math.max(RES.min, pr - RES.step); RES.quick = 0; }
+  else if (avg < RES.quickMs && ++RES.quick >= 3) { next = Math.min(RES.max, pr + RES.step / 2); RES.quick = 0; }
+  if (Math.abs(next - pr) > 0.001) renderer.setPixelRatio(next);
+}
+
 const clock = new THREE.Clock();
 let frameCount = 0, lastFrame = -Infinity;
 renderer.setAnimationLoop((time) => {
@@ -1826,6 +1843,7 @@ renderer.setAnimationLoop((time) => {
   // the heat and battery and little visible gain: skip every other frame there (90 Hz and 60 Hz
   // screens are left alone)
   if (PHONE && time - lastFrame < 10) return;
+  adaptResolution(time, time - lastFrame);
   lastFrame = time;
   const dt = clock.getDelta();
   if (mixer && playing) mixer.update(dt);
