@@ -303,10 +303,10 @@ const ICON_BG_DAY = new THREE.Color(0xffffff), ICON_BG_NIGHT = new THREE.Color(0
 // Night starfield: a seeded scatter laid out to the window size (rebuilt on resize so it stays
 // crisp), denser toward the top; a few brighter stars get a soft halo. Each star twinkles on its
 // own speed and phase; the canvas is only redrawn while the night sky is showing.
-const STAR_COUNT = 300, STAR_FPS = 30;
+const STAR_COUNT = 300, STAR_FPS = PHONE ? 20 : 30;
 const starfield = { stars: [], ctx: null, last: -1 };
 function layoutStars() {
-  const c = document.getElementById('stars'), dpr = Math.min(devicePixelRatio, 2);
+  const c = document.getElementById('stars'), dpr = Math.min(devicePixelRatio, PHONE ? 1.5 : 2);
   c.width = innerWidth * dpr; c.height = innerHeight * dpr;
   starfield.ctx = c.getContext('2d');
   starfield.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -363,6 +363,13 @@ function applyMode(k) {
   // lights stay in the scene at intensity 0 by day, so switching never triggers a shader recompile
   for (const l of lamps.lights) l.intensity = l.userData.onIntensity * LAMP_NIGHT_BOOST * k;
   for (const m of lamps.glass) m.emissiveIntensity = m.userData.onIntensity * k;
+  if (lampPools.mat) {
+    lampPools.mat.color.copy(lampPools.color).multiplyScalar(LAMP_POOL.glow * k);
+    lampPools.mat.visible = k > 0.001;
+    hemi.intensity += LAMP_POOL.fill * k;
+    hemi.color.lerp(lampPools.color, LAMP_POOL.warm * k);
+    hemi.groundColor.lerp(lampPools.color, LAMP_POOL.warm * k);
+  }
   for (const m of windows) m.emissiveIntensity = WINDOW_GLOW * k;
   for (const f of flames) f.visible = k > 0.35;
   updateStationLights(k);
@@ -372,6 +379,57 @@ function applyMode(k) {
   if (train.lampMat) train.lampMat.emissiveIntensity = THREE.MathUtils.lerp(HEADLAMP.glow[0], HEADLAMP.glow[1], k);
   if (train.beam) train.beam.intensity = THREE.MathUtils.lerp(HEADLAMP.beam[0], HEADLAMP.beam[1], k);
   riverBright.value = THREE.MathUtils.lerp(1, RIVER_NIGHT, k);
+}
+
+// Phones at night: every light costs something on every pixel of the board, and the 13 street lamps'
+// lights (on top of a dozen other night lights) were what made night mode lag there. On phones each
+// lamp instead brightens the ground under it with a flat disc that multiplies what's already drawn
+// there (so lit grass stays green, as with a real light): drawn twice, it can brighten up to 4x.
+// The lamps' lights also reached right across the board (no range limit), washing it in warm light:
+// the scene's soft sky fill takes that over, warmer and brighter at night (`fill`, `warm`).
+const LAMP_POOL = { radius: 0.5, height: 0.2, glow: 1, fill: 0.6, warm: 0.4 };
+const lampPools = { mat: null, color: new THREE.Color() };
+function addLampPools(root) {
+  if (!lamps.lights.length) return;
+  lampPools.color.copy(lamps.lights[0].color);
+  const N = 128, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), img = g.createImageData(N, N);
+  // a lamp `height` above flat ground lights it as (1 + (r/h)^2)^-1.5, eased to nothing at the rim
+  const h = LAMP_POOL.height / LAMP_POOL.radius;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const d = Math.min(1, Math.hypot(x + 0.5 - N / 2, y + 0.5 - N / 2) / (N / 2));
+    const v = 255 * (1 + (d / h) ** 2) ** -1.5 * (1 - d * d) ** 2, i = (y * N + x) * 4;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  lampPools.mat = new THREE.MeshBasicMaterial({
+    map: new THREE.CanvasTexture(c), color: 0x000000, transparent: true, depthWrite: false, toneMapped: false,
+    // result = ground * (1 + pool): brightens what's there; the canvas's alpha is left alone
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+    blendSrc: THREE.DstColorFactor, blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const geo = new THREE.CircleGeometry(LAMP_POOL.radius, 32).rotateX(-Math.PI / 2);
+  const ray = new THREE.Raycaster(), down = new THREE.Vector3(0, -1, 0);
+  root.updateMatrixWorld(true);
+  for (const l of lamps.lights) {
+    const post = l.parent;
+    ray.set(l.getWorldPosition(new THREE.Vector3()), down);
+    // the first thing under the light that isn't part of its own lamp post
+    const hit = ray.intersectObject(root, true).find((h) => {
+      for (let o = h.object; o; o = o.parent) if (o === post) return false;
+      return h.object.visible;
+    });
+    if (!hit) continue;
+    for (const order of [1, 2]) {
+      const pool = new THREE.Mesh(geo, lampPools.mat);
+      pool.position.copy(hit.point).y += 0.015;   // the ballast sits a touch below the ground beside it
+      pool.castShadow = pool.receiveShadow = false;
+      pool.renderOrder = order;
+      scene.add(pool);
+    }
+  }
+  for (const l of lamps.lights) l.removeFromParent();
 }
 
 // Fluorescent tubes hung under both station canopies. Each platform has two rows of pink pillars
@@ -478,9 +536,10 @@ function addStationLights(stationGroup) {
       }
     }
     // a few cool-white lights along each platform rather than one per tube, to keep the light count low
-    const xs = pl.tubeXs;
-    for (const x of [xs[0], xs[Math.floor(xs.length / 2)], xs[xs.length - 1]]) {
-      const l = new THREE.PointLight(0xdcecff, 0, 0.22, 2);
+    // (phones: just the middle one, reaching further, for the same reason as the lamp pools)
+    const xs = pl.tubeXs, mid = xs[Math.floor(xs.length / 2)];
+    for (const x of PHONE ? [mid] : [xs[0], mid, xs[xs.length - 1]]) {
+      const l = new THREE.PointLight(0xdcecff, 0, PHONE ? 0.36 : 0.22, 2);
       l.position.set(x, pl.tubeY - 0.02, z);
       scene.add(l); station.lights.push(l);
     }
@@ -492,7 +551,7 @@ function updateStationLights(k) {
   const warming = nightTarget === 1 && k < 1;
   const flick = warming ? (Math.random() < 0.35 ? 0.15 : 1) : 1;
   station.tubeMat.emissiveIntensity = TUBE_GLOW * k * flick;
-  for (const l of station.lights) l.intensity = TUBE_LIGHT * k * flick;
+  for (const l of station.lights) l.intensity = TUBE_LIGHT * (PHONE ? 2 : 1) * k * flick;
 }
 
 // Low-poly day clouds: clusters of flat-shaded, squashed icosahedrons scattered over the board itself,
@@ -1180,6 +1239,7 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
   addFireflies(root);
   addBoardShadow(root);
   addCatSounds(root);
+  if (PHONE) addLampPools(root);
   applyMode(night);
 
   const river = root.getObjectByName('River_Water');
