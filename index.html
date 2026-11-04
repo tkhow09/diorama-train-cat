@@ -40,7 +40,7 @@
   body.pov #title { opacity: 0; }   /* fades out while riding in the train */
   /* phones: bigger, on two rows ("DIORAMA" / "TRAIN CAT"), clear of the toggles on the right */
   @media (max-width: 600px) {
-    #title { left: 16px; top: 24px; font-size: 64px; line-height: 1.08; }
+    #title { left: 16px; top: 24px; font-size: 56px; line-height: 1.08; }
     #title .row { display: block; }
   }
   /* night sky fades in over the day gradient; opacity is driven from the script */
@@ -1140,13 +1140,13 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
   // On a tall phone screen the long board can't fill the width side-on, so look at it from its
   // left end instead, higher up: the white cat and river in front, the cats and tower beyond.
   const portrait = orbitCam.aspect < 0.8;
-  const elev = THREE.MathUtils.degToRad(portrait ? 35 : 19);
-  const azim = THREE.MathUtils.degToRad(portrait ? -62 : -16);  // three-quarter view from the left, so the left end sits nearer
+  const elev = THREE.MathUtils.degToRad(portrait ? 34 : 19);
+  const azim = THREE.MathUtils.degToRad(portrait ? -48 : -16);  // three-quarter view from the left, so the left end sits nearer
   const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(orbitCam.fov) / 2) * orbitCam.aspect);
   const dist = portrait
-    ? 32 * 0.462 / orbitCam.aspect   // framed on a 375x812 phone; wider portrait screens come closer
+    ? 37 * 0.566 / orbitCam.aspect   // framed on a 370x654 phone; narrower screens step back to keep the width
     : Math.max(size.x / 2 / Math.tan(hfov / 2), size.y * 2) * 1.12 + size.z / 2;
-  center.y -= size.y * 0.15 + (portrait ? 0.1 : 0);   // aim a little low, so the board sits a touch above the middle
+  center.y -= size.y * 0.15 + (portrait ? 0.15 : 0);   // aim a little low, so the board sits a touch above the middle
   center.x = 0; center.z = 0;   // the board is centred on the origin
   orbitCam.position.copy(center).add(new THREE.Vector3(
     Math.sin(azim) * Math.cos(elev) * dist, Math.sin(elev) * dist, Math.cos(azim) * Math.cos(elev) * dist));
