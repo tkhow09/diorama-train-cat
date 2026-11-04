@@ -1518,18 +1518,15 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', async (gl
       loadingEl.classList.add('done');
       setTimeout(() => loadingEl.remove(), 900);
     };
-    // Start the train sound with the reveal. If the browser blocks sound until the visitor
-    // interacts, keep the screen up as a "click to enter": that click starts the sound (via the
-    // unlock listeners) and lifts the screen.
-    trainSound.play().then(lift, (err) => {
-      if (err.name !== 'NotAllowedError') return lift();
-      soundUnlocked = false;
-      for (const ev of UNLOCK_EVENTS) addEventListener(ev, unlockSound, { capture: true, passive: true });
-      loadingEl.classList.add('ask');
-      document.getElementById('loadingLabel').textContent = matchMedia('(pointer: coarse)').matches ? 'TAP TO ENTER' : 'CLICK TO ENTER';
-      loadingEl.addEventListener('click', lift, { once: true });
-      addEventListener('keydown', lift, { once: true });
-    });
+    // Always keep the screen up as a "click to enter" (tap on phones), even where the browser
+    // would let sound start by itself: that click starts the sound (via the unlock listeners,
+    // inside the click, where every browser allows it) and lifts the screen.
+    soundUnlocked = false;
+    for (const ev of UNLOCK_EVENTS) addEventListener(ev, unlockSound, { capture: true, passive: true });
+    loadingEl.classList.add('ask');
+    document.getElementById('loadingLabel').textContent = matchMedia('(pointer: coarse)').matches ? 'TAP TO ENTER' : 'CLICK TO ENTER';
+    loadingEl.addEventListener('click', lift, { once: true });
+    addEventListener('keydown', lift, { once: true });
   };
   // Compile every shader and upload every texture up front. Otherwise each part of the board's far
   // side compiles the first time the spin turns it into view, and the turntable stalls for a moment.
