@@ -2120,7 +2120,8 @@ function updateBlackCatSound(dt) {
 
 // Level crossings ring as the train comes up to them: from the cab, the bell swells as the train
 // nears the closest crossing signal, rings while it passes, and dies away behind it. Day or night.
-const CROSSING_VOLUME = 0.08, CROSSING_NEAR = 0.15, CROSSING_FAR = 0.6;
+// a bit louder on phones, whose small speakers lose the bell under the train's rumble
+const CROSSING_VOLUME = PHONE ? 0.12 : 0.08, CROSSING_NEAR = 0.15, CROSSING_FAR = 0.6;
 const crossingSound = makeClipSound('sounds/crossing.mp3');
 crossingSound.loop = true;
 crossingSound.preload = 'auto';
