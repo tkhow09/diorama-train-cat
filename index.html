@@ -185,14 +185,21 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
+// Phones get a lighter setup: their graphics chips choke on the full desktop one (25 point lights
+// on every pixel, a 4096 soft shadow map redrawn every frame, ~1.5x resolution). On a phone:
+// a 1.25x resolution, a 2048 hard-edged shadow map refreshed every other frame, and the
+// night-only lights (lamps, station tubes, campfire, tram glow) switched right off by day.
+const PHONE = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));   // 2x on retina costs ~1.8x the pixels for little visible gain
+renderer.setPixelRatio(Math.min(devicePixelRatio, PHONE ? 1.25 : 1.5));   // 2x on retina costs ~1.8x the pixels for little visible gain
 renderer.setSize(innerWidth, innerHeight);
 renderer.setClearColor(0x000000, 0);           // transparent so the CSS gradient shows
 renderer.toneMapping = THREE.NeutralToneMapping;   // keeps the low-poly colours saturated
 renderer.toneMappingExposure = 0.9;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = PHONE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = !PHONE;   // phones: refreshed every other frame in the loop
+renderer.shadowMap.needsUpdate = true;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -376,6 +383,15 @@ const TUBE_LEN = 0.04, TUBE_Y = 0.252, TUBE_GLOW = 3, TUBE_LIGHT = 0.12;
 const TUBE_OUT = 0.016;   // how far out from the inner pillar row, toward the track
 const TUBE_HANG = 0.014;  // how far the fittings hang below the roof on their wires
 const station = { tubeMat: null, lights: [], platforms: [] };
+// phones: lights that only glow at night are taken out of the scene's lighting by day, so the
+// daytime shaders don't loop over two dozen lights at zero brightness (both versions are compiled
+// at load, so switching mode doesn't stall)
+const nightLights = { list: [], on: true };
+function setNightLights(on) {
+  if (nightLights.on === on) return;
+  nightLights.on = on;
+  for (const l of nightLights.list) l.visible = on;
+}
 
 // pink pillars (thin vertical pieces rising from the platform decks), grouped per platform
 function findPlatforms(stationGroup) {
@@ -878,7 +894,18 @@ function waveGLSL() {
 }
 const RIVER_SPEED = 0.5;   // 1 = Blender's real-time flow; lower is calmer
 const riverVideo = Object.assign(document.createElement('video'), {
-  src: 'river.mp4', muted: true, loop: true, playsInline: true, crossOrigin: 'anonymous' });
+  src: 'river.mp4', muted: true, loop: true, playsInline: true, autoplay: true, preload: 'auto', crossOrigin: 'anonymous' });
+// iPhones also want these as attributes before they'll play a video by themselves
+for (const a of ['muted', 'playsinline', 'webkit-playsinline', 'autoplay']) riverVideo.setAttribute(a, '');
+// ...and in Low Power Mode they won't play one at all until the visitor taps: start it then
+const startRiver = () => { if (riverVideo.paused) riverVideo.play().catch(() => {}); };
+for (const ev of ['pointerup', 'touchend', 'click', 'keydown']) addEventListener(ev, startRiver, { capture: true, passive: true });
+riverVideo.addEventListener('playing', () => {
+  for (const ev of ['pointerup', 'touchend', 'click', 'keydown']) removeEventListener(ev, startRiver, true);
+});
+// until a video frame arrives, the river is drawn in its average blue instead of an empty texture
+const riverReady = { value: 0 };
+riverVideo.addEventListener('loadeddata', () => { riverReady.value = 1; });
 riverVideo.defaultPlaybackRate = riverVideo.playbackRate = RIVER_SPEED;
 riverVideo.addEventListener('loadedmetadata', () => { riverVideo.playbackRate = RIVER_SPEED; });
 function makeWater() {
@@ -894,6 +921,7 @@ function makeWater() {
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uRiver = { value: tex };
     shader.uniforms.uRiverBright = riverBright;   // dims the raw baked colour at night
+    shader.uniforms.uRiverReady = riverReady;
     shader.uniforms.uWaveFrame = riverWaveFrame;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
@@ -912,13 +940,14 @@ function makeWater() {
         ${waveGLSL()}
         uniform sampler2D uRiver;
         uniform float uRiverBright;
+        uniform float uRiverReady;
         vec2 riverUv(vec3 p) {
           return vec2((p.x - ${b.minX.toFixed(5)}) / ${(b.maxX - b.minX).toFixed(5)},
                       (-p.z - ${b.minY.toFixed(5)}) / ${(b.maxY - b.minY).toFixed(5)});
         }`)
       .replace('#include <color_fragment>', /* glsl */ `#include <color_fragment>
         vec2 ruv = riverUv(vWaterPos);
-        vec3 wcol = sRGBTransferEOTF(texture2D(uRiver, ruv)).rgb;
+        vec3 wcol = mix(vec3(0.06, 0.26, 0.62), sRGBTransferEOTF(texture2D(uRiver, ruv)).rgb, uRiverReady);
         diffuseColor.rgb = wcol;`)
       .replace('#include <opaque_fragment>', /* glsl */ `
         outgoingLight = mix(wcol * uRiverBright, outgoingLight, ${RIVER_LIT.toFixed(3)});
@@ -991,7 +1020,7 @@ function addSun(box) {
   sun.position.copy(center).addScaledVector(dir, radius * 2);
   sun.target.position.copy(center);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.mapSize.setScalar(PHONE ? 2048 : 4096);
   Object.assign(sun.shadow.camera, {
     left: -radius, right: radius, top: radius, bottom: -radius, near: radius * 0.5, far: radius * 3.5 });
   sun.shadow.camera.updateProjectionMatrix();
@@ -1206,9 +1235,13 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
   scene.traverse((o) => {
     for (const m of [o.material].flat()) if (m) for (const v of Object.values(m)) if (v?.isTexture && !v.isVideoTexture) renderer.initTexture(v);
   });
-  (renderer.compileAsync ? renderer.compileAsync(scene, orbitCam) : Promise.resolve(renderer.compile(scene, orbitCam)))
+  const compileAll = () => (renderer.compileAsync ? renderer.compileAsync(scene, orbitCam) : Promise.resolve(renderer.compile(scene, orbitCam)));
+  if (PHONE) nightLights.list = [...lamps.lights, ...station.lights, fireLight, train.light].filter(Boolean);
+  compileAll()
+    .then(() => { if (PHONE) { for (const l of nightLights.list) l.visible = false; return compileAll(); } })
     .catch(() => {}).finally(() => {
       for (const o of hidden) o.visible = false;
+      if (PHONE) { for (const l of nightLights.list) l.visible = true; nightLights.on = true; setNightLights(night > 0.001); }
       requestAnimationFrame(() => requestAnimationFrame(reveal));
     });
   setTimeout(reveal, 4000);
@@ -1761,6 +1794,7 @@ function updateNightMusic(dt) {
 }
 
 const clock = new THREE.Clock();
+let frameCount = 0;
 renderer.setAnimationLoop(() => {
   const dt = clock.getDelta();
   if (mixer && playing) mixer.update(dt);
@@ -1771,6 +1805,10 @@ renderer.setAnimationLoop(() => {
   updateMode(dt);
   updateClouds(dt, night);
   updateFireflies(dt);
+  if (PHONE) {
+    setNightLights(night > 0.001);
+    renderer.shadowMap.needsUpdate = (frameCount++ & 1) === 0;
+  }
   updateTrainSound(dt);
   updateBonfireSound(dt);
   updatePurrSound(dt);
