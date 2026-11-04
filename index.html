@@ -364,7 +364,7 @@ function applyMode(k) {
   for (const l of lamps.lights) l.intensity = l.userData.onIntensity * LAMP_NIGHT_BOOST * k;
   for (const m of lamps.glass) m.emissiveIntensity = m.userData.onIntensity * k;
   if (lampPools.mat) {
-    lampPools.mat.color.copy(lampPools.color).multiplyScalar(LAMP_POOL.glow * k);
+    lampPools.mat.color.copy(lampPools.tint).multiplyScalar(LAMP_POOL.glow * k);
     lampPools.mat.visible = k > 0.001;
     hemi.intensity += LAMP_POOL.fill * k;
     hemi.color.lerp(lampPools.color, LAMP_POOL.warm * k);
@@ -384,14 +384,17 @@ function applyMode(k) {
 // Phones at night: every light costs something on every pixel of the board, and the 13 street lamps'
 // lights (on top of a dozen other night lights) were what made night mode lag there. On phones each
 // lamp instead brightens the ground under it with a flat disc that multiplies what's already drawn
-// there (so lit grass stays green, as with a real light): drawn twice, it can brighten up to 4x.
+// there (so lit grass stays green, as with a real light), by up to 1 + `glow` right under the lamp.
+// Where neighbouring pools overlap their brightening compounds, so `glow` is kept modest, and the
+// lamp colour is mixed toward white (`tint`) so the multiplying doesn't turn everything yellow.
 // The lamps' lights also reached right across the board (no range limit), washing it in warm light:
 // the scene's soft sky fill takes that over, warmer and brighter at night (`fill`, `warm`).
-const LAMP_POOL = { radius: 0.5, height: 0.2, glow: 1, fill: 0.6, warm: 0.4 };
-const lampPools = { mat: null, color: new THREE.Color() };
+const LAMP_POOL = { radius: 0.45, height: 0.2, glow: 1, tint: 0.5, fill: 0.3, warm: 0.25 };
+const lampPools = { mat: null, color: new THREE.Color(), tint: null };
 function addLampPools(root) {
   if (!lamps.lights.length) return;
   lampPools.color.copy(lamps.lights[0].color);
+  lampPools.tint = lampPools.color.clone().lerp(new THREE.Color(1, 1, 1), 1 - LAMP_POOL.tint);
   const N = 128, c = document.createElement('canvas'); c.width = c.height = N;
   const g = c.getContext('2d'), img = g.createImageData(N, N);
   // a lamp `height` above flat ground lights it as (1 + (r/h)^2)^-1.5, eased to nothing at the rim
@@ -421,13 +424,11 @@ function addLampPools(root) {
       return h.object.visible;
     });
     if (!hit) continue;
-    for (const order of [1, 2]) {
-      const pool = new THREE.Mesh(geo, lampPools.mat);
-      pool.position.copy(hit.point).y += 0.015;   // the ballast sits a touch below the ground beside it
-      pool.castShadow = pool.receiveShadow = false;
-      pool.renderOrder = order;
-      scene.add(pool);
-    }
+    const pool = new THREE.Mesh(geo, lampPools.mat);
+    pool.position.copy(hit.point).y += 0.015;   // the ballast sits a touch below the ground beside it
+    pool.castShadow = pool.receiveShadow = false;
+    pool.renderOrder = 1;
+    scene.add(pool);
   }
   for (const l of lamps.lights) l.removeFromParent();
 }
