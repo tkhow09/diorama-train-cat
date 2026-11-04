@@ -645,6 +645,49 @@ function toFloat(g) {
   }
   return g;
 }
+// Phones: the board's ~800 pines are copies of ten tree shapes, 345 triangles each, about half of
+// everything drawn every frame (twice, counting the shadow pass). On phones each shape is simplified
+// once at load to ~45% of its triangles, keeping its silhouette and layered branches. It's done
+// before mergeStatic, so every copy of a shape picks up its simplified version.
+const TREE_KEEP = 0.45, TREE_MAX_ERROR = 0.02;   // fraction of triangles kept; max error, relative to the tree's size
+const treeSimplifier = PHONE
+  ? import('https://cdn.jsdelivr.net/npm/meshoptimizer@0.22.0/meshopt_simplifier.module.js')
+      .then(({ MeshoptSimplifier: s }) => s.ready.then(() => s)).catch(() => null)
+  : Promise.resolve(null);
+function simplifyTrees(root, simplifier) {
+  const done = new Map();
+  root.traverse((o) => {
+    if (!o.isMesh || Array.isArray(o.material) || !/^(Green|Wood)(\.\d+)?$/.test(o.material.name)) return;
+    let tree = false;
+    for (let p = o; p && p !== root; p = p.parent) if (/Tree/.test(p.name)) tree = true;
+    const g = o.geometry;
+    if (!tree || Object.keys(g.attributes).some((k) => k !== 'position' && k !== 'normal') || Object.keys(g.morphAttributes).length) return;
+    if (!done.has(g.uuid)) done.set(g.uuid, simplifyTree(g, simplifier));
+    o.geometry = done.get(g.uuid);
+  });
+}
+function simplifyTree(geo, simplifier) {
+  // the shapes are flat-shaded, so their corners are split per face: join corners that share a
+  // position, simplify that, then split the result back into flat-shaded faces
+  const flat = toFloat(geo.index ? geo.toNonIndexed() : geo.clone());
+  const pos = flat.attributes.position.array, n = pos.length / 3;
+  const ids = new Map(), index = new Uint32Array(n), joined = [];
+  for (let i = 0; i < n; i++) {
+    const key = `${pos[3 * i].toFixed(5)},${pos[3 * i + 1].toFixed(5)},${pos[3 * i + 2].toFixed(5)}`;
+    if (!ids.has(key)) { ids.set(key, joined.length / 3); joined.push(pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]); }
+    index[i] = ids.get(key);
+  }
+  const points = new Float32Array(joined);
+  const [kept] = simplifier.simplify(index, points, 3, Math.floor(n * TREE_KEEP / 3) * 3, TREE_MAX_ERROR, []);
+  if (kept.length < 3) return geo;
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(points, 3));
+  out.setIndex(new THREE.BufferAttribute(kept, 1));
+  const result = out.toNonIndexed();
+  result.computeVertexNormals();   // non-indexed: one normal per face, as before
+  return result;
+}
+
 function mergeStatic(root, animations) {
   root.updateMatrixWorld(true);
   const animated = new Set();
@@ -1108,7 +1151,7 @@ function shrinkTextures(root) {
 
 // diorama.glb is meshopt-compressed (geometry, shape keys and animation) with WebP textures:
 // ~10 MB instead of ~33 MB. The uncompressed export is kept in source/ (not published).
-new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) => {
+new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', async (gltf) => {
   const root = gltf.scene;
   scene.add(root);
 
@@ -1184,6 +1227,8 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
 
   const river = root.getObjectByName('River_Water');
   if (river) river.material = makeWater();
+  const simplifier = await treeSimplifier;
+  if (simplifier) simplifyTrees(root, simplifier);
   mergeStatic(root, gltf.animations);
 
   addSun(new THREE.Box3().setFromObject(root));
