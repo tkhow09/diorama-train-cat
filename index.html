@@ -38,7 +38,11 @@
     transition: opacity .6s ease;
   }
   body.pov #title { opacity: 0; }   /* fades out while riding in the train */
-  @media (max-width: 600px) { #title { left: 16px; top: 14px; font-size: 38px; } }
+  /* phones: bigger, on two rows ("DIORAMA" / "TRAIN CAT"), clear of the toggles on the right */
+  @media (max-width: 600px) {
+    #title { left: 16px; top: 24px; font-size: 64px; line-height: 1.08; }
+    #title .row { display: block; }
+  }
   /* night sky fades in over the day gradient; opacity is driven from the script */
   #nightSky {
     position: fixed; inset: 0; z-index: 0; opacity: 0; pointer-events: none;
@@ -73,12 +77,14 @@
   }
   .toggle.right .ticon { right: auto; left: 7px; }
   .toggle .ticon svg { width: 100%; height: 100%; display: block; }
-  @media (max-width: 600px) { #toggles { right: 16px; top: 18px; } }
+  /* phones: top edge level with the title's letters (title box at 24px, its capitals start ~2px lower) */
+  @media (max-width: 600px) { #toggles { right: 16px; top: 26px; } }
   /* icon controls, centred at the bottom; icon colour follows day/night (--icon-color, set from the script) */
   #controls {
     position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%); z-index: 2;
     display: flex; gap: 18px;
   }
+  @media (max-width: 600px) { #controls { bottom: 56px; } }
   #controls button {
     width: 52px; height: 52px; padding: 0; border: 0; border-radius: 50%; cursor: pointer;
     background: transparent; color: var(--icon-color, #4d4d4d);
@@ -135,7 +141,7 @@
 </head>
 <body>
 <div id="nightSky"><canvas id="stars"></canvas></div>
-<h1 id="title">DIORAMA TRAIN CAT</h1>
+<h1 id="title">DIORAMA <span class="row">TRAIN CAT</span></h1>
 <div id="loading" role="status" aria-live="polite">
   <div id="paws" aria-hidden="true">
     <svg viewBox="0 0 16 16"><use href="#paw"/></svg>
@@ -1131,11 +1137,16 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
   const box = new THREE.Box3().setFromObject(root);
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  const elev = THREE.MathUtils.degToRad(19);
-  const azim = THREE.MathUtils.degToRad(-16);  // three-quarter view from the left, so the left end sits nearer
+  // On a tall phone screen the long board can't fill the width side-on, so look at it from its
+  // left end instead, higher up: the white cat and river in front, the cats and tower beyond.
+  const portrait = orbitCam.aspect < 0.8;
+  const elev = THREE.MathUtils.degToRad(portrait ? 35 : 19);
+  const azim = THREE.MathUtils.degToRad(portrait ? -62 : -16);  // three-quarter view from the left, so the left end sits nearer
   const hfov = 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(orbitCam.fov) / 2) * orbitCam.aspect);
-  const dist = Math.max(size.x / 2 / Math.tan(hfov / 2), size.y * 2) * 1.12 + size.z / 2;
-  center.y -= size.y * 0.15;   // aim a little low, so the board sits a touch above the middle
+  const dist = portrait
+    ? 32 * 0.462 / orbitCam.aspect   // framed on a 375x812 phone; wider portrait screens come closer
+    : Math.max(size.x / 2 / Math.tan(hfov / 2), size.y * 2) * 1.12 + size.z / 2;
+  center.y -= size.y * 0.15 + (portrait ? 0.1 : 0);   // aim a little low, so the board sits a touch above the middle
   center.x = 0; center.z = 0;   // the board is centred on the origin
   orbitCam.position.copy(center).add(new THREE.Vector3(
     Math.sin(azim) * Math.cos(elev) * dist, Math.sin(elev) * dist, Math.cos(azim) * Math.cos(elev) * dist));
@@ -1158,6 +1169,7 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
 
   mixer = new THREE.AnimationMixer(root);
   for (const clip of gltf.animations) mixer.clipAction(clip).play();
+  if (povCam) recordCabPath(root, Math.max(...gltf.animations.map((c) => c.duration)));
 
   // reveal once the first frame with the diorama has been drawn (or after a moment, for tabs
   // opened in the background where frames don't run), then drop the overlay
@@ -1181,8 +1193,8 @@ new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load('diorama.glb', (gltf) =>
       soundUnlocked = false;
       for (const ev of UNLOCK_EVENTS) addEventListener(ev, unlockSound, { capture: true, passive: true });
       loadingEl.classList.add('ask');
-      document.getElementById('loadingLabel').textContent = 'CLICK TO ENTER';
-      loadingEl.addEventListener('pointerdown', lift, { once: true });
+      document.getElementById('loadingLabel').textContent = matchMedia('(pointer: coarse)').matches ? 'TAP TO ENTER' : 'CLICK TO ENTER';
+      loadingEl.addEventListener('click', lift, { once: true });
       addEventListener('keydown', lift, { once: true });
     });
   };
@@ -1271,10 +1283,11 @@ function poseOf(cam) {
   const look = cam === orbitCam ? controls.target.clone()
     : cam === flyCam ? flyLook.clone()
     : pos.clone().addScaledVector(new THREE.Vector3(0, 0, -1).applyQuaternion(quat), 0.5);
-  return { pos, quat, look, fov: cam.fov, near: cam.near };
+  return { pos, quat, look, fov: cam === povCam ? povFov(innerWidth / innerHeight) : cam.fov, near: cam.near };
 }
 
 function startFly(toPov) {
+  if (toPov) lead.yaw = 0;   // the look-ahead eases in once you're in the cab
   // leaving the cab starts from wherever the passenger is looking
   const current = fly ? flyCam : (usePov ? lookCam : orbitCam);
   fly = { from: poseOf(current), to: toPov ? povCam : orbitCam, t0: clock.elapsedTime, dur: FLY_SECONDS };
@@ -1324,6 +1337,16 @@ function maxYaw(pitch) {
 }
 const LOOK_DRAG = 0.004, LOOK_SWIPE = 0.003;   // radians per pixel
 const lookCam = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.01, 500);
+// The cab camera keeps Blender's vertical angle (~72°), which on a tall phone screen leaves only a
+// ~37° wide slice ahead: on curves the track swings straight out of view, as if the camera didn't
+// turn. On screens narrower than POV_REF_ASPECT, widen the vertical angle so the view stays as wide
+// as it would be on a square screen, up to POV_MAX_FOV so it doesn't turn fish-eyed.
+const POV_REF_ASPECT = 1.0, POV_MAX_FOV = 100;
+function povFov(aspect) {
+  if (!povCam || aspect >= POV_REF_ASPECT) return povCam?.fov ?? 70;
+  const t = Math.tan(THREE.MathUtils.degToRad(povCam.fov) / 2) * POV_REF_ASPECT / aspect;
+  return Math.min(POV_MAX_FOV, THREE.MathUtils.radToDeg(2 * Math.atan(t)));
+}
 const look = { yaw: 0, pitch: 0, drag: null, recentre: false };
 const lookActive = () => usePov && !fly && povCam;
 const UP_AXIS = new THREE.Vector3(0, 1, 0), RIGHT_AXIS = new THREE.Vector3(1, 0, 0);
@@ -1335,6 +1358,46 @@ function turnLook(dYaw, dPitch) {
   look.yaw = THREE.MathUtils.clamp(look.yaw + dYaw, -lim, lim);
 }
 
+// Look ahead along the track. The cab camera points straight along the tram's body, so on a curve
+// it stares at the trees while the rails bend away out of frame; on a tall phone screen, with its
+// narrow view, the track leaves the picture almost at once. So the passenger turns their head
+// toward where the cab will be CAB_LEAD seconds from now, like you would on a real ride. The
+// tram's path is sampled once at load. Applied in full on portrait screens, fading out by
+// landscape ones, where the wide view already keeps the curve in shot.
+const CAB_LEAD = 1.0, CAB_LEAD_MAX = THREE.MathUtils.degToRad(40), CAB_PATH_SAMPLES = 420;
+const cabPath = { dur: 0, pts: [] };
+const lead = { yaw: 0 };
+function recordCabPath(root, dur) {
+  cabPath.dur = dur;
+  for (let i = 0; i < CAB_PATH_SAMPLES; i++) {
+    mixer.setTime((dur * i) / CAB_PATH_SAMPLES);
+    root.updateMatrixWorld(true);
+    cabPath.pts.push(povCam.getWorldPosition(new THREE.Vector3()));
+  }
+  mixer.setTime(0);
+}
+function cabPathAt(t, out) {
+  const n = cabPath.pts.length, f = ((((t % cabPath.dur) + cabPath.dur) % cabPath.dur) / cabPath.dur) * n;
+  const i = Math.floor(f) % n;
+  return out.lerpVectors(cabPath.pts[i], cabPath.pts[(i + 1) % n], f - Math.floor(f));
+}
+const _ahead = new THREE.Vector3(), _fwd = new THREE.Vector3();
+function leadYaw(dt) {
+  const aspect = innerWidth / innerHeight;
+  const weight = 1 - THREE.MathUtils.smoothstep(aspect, 0.9, 1.5);
+  let target = 0;
+  if (weight > 0 && cabPath.pts.length) {
+    const dir = cabPathAt(mixer.time + CAB_LEAD, _ahead).sub(lookCam.position).setY(0);
+    const fwd = _fwd.set(0, 0, -1).applyQuaternion(lookCam.quaternion).setY(0);
+    if (dir.lengthSq() > 1e-6 && fwd.lengthSq() > 1e-6) {
+      dir.normalize(); fwd.normalize();
+      const angle = Math.atan2(fwd.z * dir.x - fwd.x * dir.z, fwd.dot(dir));   // + = ahead is to the left
+      target = THREE.MathUtils.clamp(angle, -CAB_LEAD_MAX, CAB_LEAD_MAX) * weight;
+    }
+  }
+  lead.yaw += (target - lead.yaw) * (1 - Math.exp(-dt * 3));   // ease, so the head turns smoothly
+  return lead.yaw;
+}
 function updateLookCam(dt) {
   if (look.recentre) {   // ease back to straight ahead
     const k = 1 - Math.exp(-dt * 6);
@@ -1344,10 +1407,11 @@ function updateLookCam(dt) {
   povCam.updateWorldMatrix(true, false);
   povCam.getWorldPosition(lookCam.position);
   povCam.getWorldQuaternion(lookCam.quaternion);
+  const ahead = leadYaw(dt);
   // turn around the world's up axis (so the horizon stays level), tilt around the camera's own side axis
-  lookCam.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP_AXIS, look.yaw))
+  lookCam.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(UP_AXIS, look.yaw + ahead))
     .multiply(new THREE.Quaternion().setFromAxisAngle(RIGHT_AXIS, look.pitch));
-  lookCam.fov = povCam.fov; lookCam.near = povCam.near;
+  lookCam.fov = povFov(innerWidth / innerHeight); lookCam.near = povCam.near;
   lookCam.aspect = innerWidth / innerHeight;
   lookCam.updateProjectionMatrix();
 }
@@ -1401,6 +1465,40 @@ addEventListener('resize', () => {
   for (const c of [orbitCam, povCam]) if (c) { c.aspect = innerWidth / innerHeight; c.updateProjectionMatrix(); }
 });
 
+// Every sound goes through makeSound(). Two phone quirks are handled here:
+//  - iOS ignores an <audio> element's volume (it always plays at full), so once the visitor
+//    has tapped, each sound is routed through a Web Audio gain node and `.volume` drives that.
+//  - Phones only allow a sound to start later (from the animation loop) if it was started once
+//    inside a tap, so the first tap "primes" every sound silently.
+const VOLUME_LOCKED = (() => { const t = new Audio(); t.volume = 0.5; return t.volume !== 0.5; })();
+const nativeVolume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+const allSounds = [];
+let audioCtx = null;
+function routeThroughGain(a) {
+  if (a._gain) return;
+  const g = audioCtx.createGain();
+  g.gain.value = a._vol;
+  audioCtx.createMediaElementSource(a).connect(g).connect(audioCtx.destination);
+  a._gain = g;
+}
+function makeSound(src) {
+  const a = new Audio(src);
+  a._vol = 1;
+  Object.defineProperty(a, 'volume', {
+    get: () => a._vol,
+    set: (v) => { a._vol = v; if (a._gain) a._gain.gain.value = v; else nativeVolume.set.call(a, v); },
+  });
+  allSounds.push(a);
+  if (audioCtx) routeThroughGain(a);
+  return a;
+}
+// call from inside a tap / click / key press
+function unlockAllSounds(prime = true) {
+  if (VOLUME_LOCKED && !audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx) { for (const a of allSounds) routeThroughGain(a); audioCtx.resume(); }
+  if (prime) for (const a of allSounds) if (a.paused && !a.dataset.primed) primeSound(a);
+}
+
 // Click a giant cat to hear it. Each cat's rig root (named in Blender) gets its own sound; a click
 // is a press and release without dragging, so orbiting the view never sets one off.
 const CAT_SOUNDS = { Cat: 'white', Cat002: 'black', Cat003: 'orange' };   // white by the river, black mid-board, orange on the tower
@@ -1412,7 +1510,7 @@ function addCatSounds(root) {
     if (!cat) continue;
     if (sound === 'white') findGaze(cat, purrEye);   // its gaze starts the purr heard from the cab
     if (sound === 'black') findGaze(cat, blackEye);   // and this one's gaze sets off its sound
-    const audio = new Audio(`sounds/${sound}.mp3`);
+    const audio = makeSound(`sounds/${sound}.mp3`);
     audio.preload = 'auto';
     audio.volume = CAT_VOLUME[sound] ?? 1;
     cat.traverse((o) => { if (o.isMesh) catHits.push({ mesh: o, audio }); });
@@ -1442,18 +1540,22 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 // start on its own as the page opens; browsers that block sound until the visitor interacts get it
 // started inside their first click, tap or key press (Safari only allows it inside that handler).
 const TRAIN_VOLUME = { orbit: 0.04, pov: 0.11 };
-const trainSound = new Audio('sounds/trains.mp3');
+const trainSound = makeSound('sounds/trains.mp3');
 trainSound.loop = true;
 trainSound.preload = 'auto';
 trainSound.volume = TRAIN_VOLUME.orbit;
 let dioramaReady = false;   // set when the loading screen lifts
 let soundUnlocked = true, soundStarting = false;   // assume autoplay works until the browser says no
-const UNLOCK_EVENTS = ['pointerdown', 'keydown', 'touchstart'];
+// phones only count a tap as permission to play once the finger lifts (touchend / pointerup /
+// click); a press (pointerdown / touchstart) is refused there, so listen for the release
+const UNLOCK_EVENTS = ['pointerup', 'touchend', 'click', 'keydown'];
 const unlockSound = () => {
   soundUnlocked = true;
   for (const ev of UNLOCK_EVENTS) removeEventListener(ev, unlockSound, true);
+  unlockAllSounds(false);   // route through gain first (iOS), so they start at the right volume
   if (playing && dioramaReady && sfxOn) startTrainSound();
   if (musicOn && dioramaReady && !nightTarget) dayMusic.play().catch(() => {});
+  unlockAllSounds();   // prime the rest (anything already starting is skipped)
 };
 function startTrainSound() {
   if (soundStarting) return;
@@ -1480,7 +1582,7 @@ function updateTrainSound(dt) {
 // fades in over the fly-in and out on the way back. Part of SFX; stops with the train on pause.
 const BONFIRE_VOLUME = 0.08, BONFIRE_NEAR = 0.35, BONFIRE_FAR = 1.1;   // world units (the board is ~7.5 long)
 const _camAt = new THREE.Vector3(), _fireAt = new THREE.Vector3();
-const bonfireSound = new Audio('sounds/bonfire.mp3');
+const bonfireSound = makeSound('sounds/bonfire.mp3');
 bonfireSound.loop = true;
 bonfireSound.preload = 'auto';
 bonfireSound.volume = 0;
@@ -1520,7 +1622,7 @@ function updateBonfireSound(dt) {
 // PURR_LOOK_OFF, so it doesn't flicker at the edge. Day or night.
 const PURR_VOLUME = 0.05, PURR_LOOK_ON = 0.6, PURR_LOOK_OFF = 0.45;
 const purrEye = { head: null, left: null, right: null, looking: false };
-const purrSound = new Audio('sounds/purring.mp3');
+const purrSound = makeSound('sounds/purring.mp3');
 purrSound.loop = true;
 purrSound.preload = 'auto';
 purrSound.volume = 0;
@@ -1557,7 +1659,7 @@ function updatePurrSound(dt) {
 // A one-shot (~4 s); it re-arms once the train is well away again. Heard from the cab only.
 const BLACK_VOLUME = 0.12, BLACK_NEAR = 1.0, BLACK_LOOK = 0.6, BLACK_REARM = 1.6;
 const blackEye = { head: null, left: null, right: null, armed: true };
-const blackSound = new Audio('sounds/activate.mp3');
+const blackSound = makeSound('sounds/activate.mp3');
 blackSound.preload = 'auto';
 function updateBlackCatSound(dt) {
   const allowed = soundUnlocked && playing && dioramaReady && sfxOn && usePov;
@@ -1581,7 +1683,7 @@ function updateBlackCatSound(dt) {
 // Level crossings ring as the train comes up to them: from the cab, the bell swells as the train
 // nears the closest crossing signal, rings while it passes, and dies away behind it. Day or night.
 const CROSSING_VOLUME = 0.08, CROSSING_NEAR = 0.15, CROSSING_FAR = 0.6;
-const crossingSound = new Audio('sounds/crossing.mp3');
+const crossingSound = makeSound('sounds/crossing.mp3');
 crossingSound.loop = true;
 crossingSound.preload = 'auto';
 crossingSound.volume = 0;
@@ -1604,7 +1706,7 @@ function updateCrossingSound(dt) {
 
 // Day music: a song loops softly while it's day, fading out as night falls (and back in at dawn).
 const DAY_MUSIC_VOLUME = 0.5;
-const dayMusic = new Audio('sounds/day.mp3');
+const dayMusic = makeSound('sounds/day.mp3');
 dayMusic.loop = true;
 dayMusic.preload = 'auto';
 dayMusic.volume = 0;
@@ -1621,11 +1723,11 @@ function updateDayMusic() {
 // gaps. The owl sits well under the crickets. Both fade with the day/night blend; MUSIC mutes them.
 const NIGHT_MUSIC = { cricket: 0.25, owl: 0.08 };
 const OWL_FIRST = 6, OWL_GAP = [12, 22];   // seconds: first hoot after night falls, then between hoots
-const crickets = new Audio('sounds/cricket.mp3');
+const crickets = makeSound('sounds/cricket.mp3');
 crickets.loop = true;
 crickets.preload = 'auto';
 crickets.volume = 0;
-const owl = new Audio('sounds/owl.mp3');
+const owl = makeSound('sounds/owl.mp3');
 owl.preload = 'auto';
 let owlWait = OWL_FIRST, owlPrimed = false;
 function startNightMusic() {
